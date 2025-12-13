@@ -3,6 +3,7 @@
 import { useState, useRef } from 'react';
 import { ConnectKitButton } from 'connectkit';
 import { useAccount } from 'wagmi';
+import Image from 'next/image';
 import {
   generateBingoCard,
   generateMultipleCards,
@@ -135,9 +136,14 @@ export default function Home() {
     <main className="container">
       <header className="header">
         <div className="header-content">
-          <div>
-            <h1>UltraBingo</h1>
-            <p>Generador de Cartones de Bingo</p>
+          <div className="logo-container">
+            <Image
+              src="/logo.svg"
+              alt="UltraBingo"
+              width={200}
+              height={120}
+              priority
+            />
           </div>
           <ConnectKitButton />
         </div>
@@ -325,19 +331,9 @@ export default function Home() {
           gap: 20px;
         }
 
-        .header h1 {
-          font-size: 2.5rem;
-          background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          margin: 0;
-        }
-
-        .header p {
-          color: #888;
-          font-size: 1.1rem;
-          margin-top: 8px;
+        .logo-container {
+          display: flex;
+          align-items: center;
         }
 
         .control-panel {
@@ -732,6 +728,10 @@ export default function Home() {
           .header-content {
             flex-direction: column;
             text-align: center;
+          }
+
+          .logo-container {
+            justify-content: center;
           }
 
           .button-group {
