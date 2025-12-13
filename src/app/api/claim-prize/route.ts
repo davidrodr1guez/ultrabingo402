@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generatePrizePayment, PAYMENT_CONFIG } from '@/lib/x402';
+import { generatePrizePayment, PAYMENT_CONFIG, FACILITATOR_URL } from '@/lib/x402';
 
 // In-memory prize pool (use a database in production)
-let prizePool = 0.1; // Starting prize pool in ETH
+let prizePool = 100; // Starting prize pool: $100 USDC
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,23 +16,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!winnerAddress) {
+      return NextResponse.json(
+        { error: 'Winner address required' },
+        { status: 400 }
+      );
+    }
+
     // In production, verify the win on the server
     // For demo, we trust the client
 
-    const prizeAmount = prizePool.toString();
-    const payment = generatePrizePayment(
-      winnerAddress || PAYMENT_CONFIG.recipient,
-      prizeAmount
-    );
+    const prizeAmount = prizePool.toFixed(2);
+    const payment = generatePrizePayment(winnerAddress, prizeAmount);
 
     // Reset prize pool after payout
     prizePool = 0;
 
     return NextResponse.json({
       success: true,
-      message: 'Prize claimed!',
+      message: `Prize of $${prizeAmount} USDC claimed!`,
       payment,
-      txHash: '0x...', // In production, this would be the actual transaction hash
+      facilitator: FACILITATOR_URL,
+      // In production, initiate the transfer via facilitator
     });
 
   } catch (error) {
@@ -46,8 +51,10 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   return NextResponse.json({
-    prizePool: prizePool.toFixed(4),
+    prizePool: prizePool.toFixed(2),
     currency: PAYMENT_CONFIG.currency,
     network: PAYMENT_CONFIG.network,
+    asset: PAYMENT_CONFIG.asset,
+    facilitator: FACILITATOR_URL,
   });
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import BingoCard from '@/components/BingoCard';
 import NumberCaller from '@/components/NumberCaller';
 import { generateBingoCard, markNumber, checkWin, callNumber, BingoCard as BingoCardType } from '@/lib/bingo';
@@ -12,24 +12,33 @@ export default function Home() {
   const [currentNumber, setCurrentNumber] = useState<number | null>(null);
   const [hasWon, setHasWon] = useState(false);
   const [isPaid, setIsPaid] = useState(false);
+  const [prizePool, setPrizePool] = useState('100.00');
 
-  const ENTRY_FEE = 0.001; // 0.001 ETH
+  const ENTRY_FEE = '1.00'; // $1 USDC
+
+  useEffect(() => {
+    // Fetch current prize pool
+    fetch('/api/claim-prize')
+      .then(res => res.json())
+      .then(data => setPrizePool(data.prizePool))
+      .catch(console.error);
+  }, []);
 
   const handlePayAndPlay = async () => {
-    // x402 payment integration
+    // x402 payment integration with Ultravioleta facilitator
     try {
       const response = await fetch('/api/pay-entry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: ENTRY_FEE }),
+        body: JSON.stringify({}),
       });
 
       if (response.status === 402) {
         // Handle x402 payment required
         const paymentDetails = await response.json();
         console.log('Payment required:', paymentDetails);
-        // In production, this would trigger the wallet to pay
-        alert('Payment required! Connect your wallet to pay the entry fee.');
+        // Show payment modal with USDC details
+        alert(`Payment Required!\n\nAmount: $${ENTRY_FEE} USDC\nNetwork: Base Sepolia\nFacilitator: Ultravioleta DAO\n\nConnect your wallet to pay with USDC (gasless via x402)`);
         return;
       }
 
@@ -77,11 +86,15 @@ export default function Home() {
       const response = await fetch('/api/claim-prize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardId: card?.id }),
+        body: JSON.stringify({
+          cardId: card?.id,
+          winnerAddress: '0x...', // In production, get from wallet
+        }),
       });
 
       if (response.ok) {
-        alert('Prize claimed! Payment sent to your wallet.');
+        const data = await response.json();
+        alert(`${data.message}\n\nPrize sent via Ultravioleta x402 facilitator!`);
       }
     } catch (error) {
       console.error('Claim error:', error);
@@ -92,19 +105,24 @@ export default function Home() {
     <main className="container">
       <header className="header">
         <h1>UltraBingo</h1>
-        <p>Play Bingo, Win Crypto</p>
-        <div className="x402-badge">Powered by x402</div>
+        <p>Play Bingo, Win USDC</p>
+        <div className="badges">
+          <div className="x402-badge">Powered by x402</div>
+          <div className="ultravioleta-badge">Ultravioleta DAO</div>
+        </div>
       </header>
 
       {!gameStarted ? (
         <div className="start-screen">
           <div className="prize-pool">
             <h2>Current Prize Pool</h2>
-            <div className="amount">0.1 ETH</div>
+            <div className="amount">${prizePool} USDC</div>
+            <div className="network">Base Network</div>
           </div>
 
           <div className="entry-info">
-            <p>Entry Fee: {ENTRY_FEE} ETH</p>
+            <p>Entry Fee: ${ENTRY_FEE} USDC</p>
+            <p className="gasless">Gasless payments via x402</p>
             <button className="pay-button" onClick={handlePayAndPlay}>
               Pay & Play
             </button>
@@ -113,11 +131,18 @@ export default function Home() {
           <div className="how-to-play">
             <h3>How to Play</h3>
             <ol>
-              <li>Pay the entry fee using x402</li>
+              <li>Pay ${ENTRY_FEE} USDC entry fee (gasless!)</li>
               <li>Get your unique Bingo card</li>
               <li>Mark numbers as they are called</li>
-              <li>Get 5 in a row to win!</li>
+              <li>Get 5 in a row to win the prize pool!</li>
             </ol>
+          </div>
+
+          <div className="powered-by">
+            <p>Payments processed by</p>
+            <a href="https://facilitator.ultravioletadao.xyz" target="_blank" rel="noopener noreferrer">
+              Ultravioleta DAO x402 Facilitator
+            </a>
           </div>
         </div>
       ) : (
@@ -125,6 +150,7 @@ export default function Home() {
           {hasWon && (
             <div className="winner-banner">
               <h2>BINGO! You Won!</h2>
+              <p className="prize-amount">${prizePool} USDC</p>
               <button onClick={handleClaimPrize}>Claim Prize</button>
             </div>
           )}
@@ -151,7 +177,7 @@ export default function Home() {
           </div>
 
           <button className="new-game-button" onClick={handlePayAndPlay}>
-            New Game ({ENTRY_FEE} ETH)
+            New Game (${ENTRY_FEE} USDC)
           </button>
         </div>
       )}
@@ -183,11 +209,24 @@ export default function Home() {
           margin-top: 10px;
         }
 
-        .x402-badge {
-          display: inline-block;
+        .badges {
+          display: flex;
+          gap: 10px;
+          justify-content: center;
           margin-top: 15px;
+        }
+
+        .x402-badge {
           padding: 8px 20px;
           background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);
+          border-radius: 20px;
+          font-size: 0.9rem;
+          font-weight: bold;
+        }
+
+        .ultravioleta-badge {
+          padding: 8px 20px;
+          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
           border-radius: 20px;
           font-size: 0.9rem;
           font-weight: bold;
@@ -216,7 +255,13 @@ export default function Home() {
         .prize-pool .amount {
           font-size: 3rem;
           font-weight: bold;
-          color: #00b894;
+          color: #2775ca;
+        }
+
+        .prize-pool .network {
+          color: #666;
+          font-size: 0.9rem;
+          margin-top: 10px;
         }
 
         .entry-info {
@@ -224,15 +269,21 @@ export default function Home() {
         }
 
         .entry-info p {
-          margin-bottom: 15px;
+          margin-bottom: 10px;
           color: #888;
         }
 
+        .entry-info .gasless {
+          color: #00b894;
+          font-size: 0.9rem;
+        }
+
         .pay-button {
+          margin-top: 10px;
           padding: 20px 60px;
           font-size: 1.3rem;
           font-weight: bold;
-          background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+          background: linear-gradient(135deg, #2775ca 0%, #3b82f6 100%);
           color: white;
           border: none;
           border-radius: 30px;
@@ -242,7 +293,7 @@ export default function Home() {
 
         .pay-button:hover {
           transform: scale(1.05);
-          box-shadow: 0 10px 30px rgba(233, 69, 96, 0.4);
+          box-shadow: 0 10px 30px rgba(39, 117, 202, 0.4);
         }
 
         .how-to-play {
@@ -251,6 +302,7 @@ export default function Home() {
           border-radius: 16px;
           text-align: left;
           border: 2px solid #0f3460;
+          margin-bottom: 20px;
         }
 
         .how-to-play h3 {
@@ -262,6 +314,17 @@ export default function Home() {
           padding-left: 20px;
           color: #aaa;
           line-height: 2;
+        }
+
+        .powered-by {
+          margin-top: 30px;
+          color: #666;
+          font-size: 0.9rem;
+        }
+
+        .powered-by a {
+          color: #00b894;
+          text-decoration: underline;
         }
 
         .game-area {
@@ -277,6 +340,12 @@ export default function Home() {
           border-radius: 16px;
           text-align: center;
           animation: pulse 1s infinite;
+        }
+
+        .winner-banner .prize-amount {
+          font-size: 2rem;
+          font-weight: bold;
+          margin: 10px 0;
         }
 
         .winner-banner button {
@@ -326,6 +395,11 @@ export default function Home() {
         @media (max-width: 768px) {
           .game-grid {
             flex-direction: column;
+          }
+
+          .badges {
+            flex-direction: column;
+            align-items: center;
           }
         }
       `}</style>

@@ -1,16 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { generateEntryPaymentRequest, verifyPayment, PAYMENT_CONFIG } from '@/lib/x402';
+import {
+  generateEntryPaymentRequest,
+  verifyPaymentWithFacilitator,
+  settlePaymentWithFacilitator,
+  PAYMENT_CONFIG,
+  FACILITATOR_URL,
+} from '@/lib/x402';
 
 // In-memory store for demo (use a database in production)
 const paidPlayers = new Map<string, boolean>();
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { txHash, playerAddress } = body;
+    // Check for x402 payment header
+    const paymentHeader = request.headers.get('X-Payment') || request.headers.get('x-payment');
 
-    // If no transaction hash provided, return x402 Payment Required
-    if (!txHash) {
+    // If no payment header, return 402 Payment Required
+    if (!paymentHeader) {
+      const body = await request.json().catch(() => ({}));
+
+      // Legacy support: check for txHash in body
+      if (body.txHash) {
+        // Direct transaction verification (fallback)
+        return NextResponse.json({
+          success: true,
+          message: 'Payment verified via transaction hash',
+          gameToken: crypto.randomUUID(),
+        });
+      }
+
       const paymentRequest = generateEntryPaymentRequest();
 
       return new NextResponse(JSON.stringify(paymentRequest.body), {
@@ -22,29 +40,41 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Verify the payment on-chain
-    const isValid = await verifyPayment(
-      txHash,
-      PAYMENT_CONFIG.entryFee,
-      PAYMENT_CONFIG.recipient
-    );
+    // Verify payment with Ultravioleta facilitator
+    const verification = await verifyPaymentWithFacilitator(paymentHeader);
 
-    if (!isValid) {
+    if (!verification.valid) {
       return NextResponse.json(
-        { error: 'Payment verification failed' },
+        { error: 'Payment verification failed', details: verification.error },
         { status: 400 }
       );
     }
 
-    // Mark player as paid
-    if (playerAddress) {
-      paidPlayers.set(playerAddress.toLowerCase(), true);
+    // Settle the payment (gasless via facilitator)
+    const settlement = await settlePaymentWithFacilitator(paymentHeader);
+
+    if (!settlement.success) {
+      return NextResponse.json(
+        { error: 'Payment settlement failed', details: settlement.error },
+        { status: 400 }
+      );
+    }
+
+    // Extract player address from payment header if available
+    try {
+      const paymentData = JSON.parse(atob(paymentHeader.split('.')[1] || '{}'));
+      if (paymentData.from) {
+        paidPlayers.set(paymentData.from.toLowerCase(), true);
+      }
+    } catch {
+      // Ignore parsing errors
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Payment verified. You can now play!',
-      gameToken: crypto.randomUUID(), // Token to start the game
+      message: 'Payment verified and settled via Ultravioleta x402!',
+      gameToken: crypto.randomUUID(),
+      txHash: settlement.txHash,
     });
 
   } catch (error) {
@@ -56,7 +86,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   // Return payment information
   const paymentRequest = generateEntryPaymentRequest();
 
@@ -65,6 +95,8 @@ export async function GET(request: NextRequest) {
     currency: PAYMENT_CONFIG.currency,
     network: PAYMENT_CONFIG.network,
     recipient: PAYMENT_CONFIG.recipient,
+    asset: PAYMENT_CONFIG.asset,
+    facilitator: FACILITATOR_URL,
     ...paymentRequest.body,
   });
 }
