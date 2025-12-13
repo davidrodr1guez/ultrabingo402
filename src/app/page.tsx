@@ -1,358 +1,159 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { useAccount } from 'wagmi';
-import BingoCard from '@/components/BingoCard';
-import NumberCaller from '@/components/NumberCaller';
-import ConnectWalletButton from '@/components/ConnectWalletButton';
-import { useX402Payment } from '@/hooks/useX402Payment';
+import { useState, useRef } from 'react';
 import {
   generateBingoCard,
-  markNumber,
-  checkWin,
-  callNumber,
+  generateMultipleCards,
   BingoCard as BingoCardType,
   GameMode,
-  WinPattern,
-  WIN_PATTERNS,
 } from '@/lib/bingo';
 
-const ENTRY_FEE = '0.01';
-const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000';
-
 export default function Home() {
-  const { isConnected, address } = useAccount();
-  const { pay, checkBalance, isProcessing } = useX402Payment();
-
-  // Game state
-  const [gameStarted, setGameStarted] = useState(false);
-  const [card, setCard] = useState<BingoCardType | null>(null);
-  const [calledNumbers, setCalledNumbers] = useState<number[]>([]);
-  const [currentNumber, setCurrentNumber] = useState<number | null>(null);
-  const [hasWon, setHasWon] = useState(false);
-  const [prizePool, setPrizePool] = useState('100.00');
-
-  // Game settings
+  const [cards, setCards] = useState<BingoCardType[]>([]);
   const [gameMode, setGameMode] = useState<GameMode>('1-75');
-  const [winPattern, setWinPattern] = useState<WinPattern>('line');
-  const [autoCall, setAutoCall] = useState(false);
-  const [autoCallSpeed, setAutoCallSpeed] = useState(3000);
+  const [cardCount, setCardCount] = useState(1);
+  const [gameTitle, setGameTitle] = useState('UltraBingo');
+  const printRef = useRef<HTMLDivElement>(null);
 
-  // Payment state
-  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'checking' | 'signing' | 'processing' | 'success' | 'error'>('idle');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [hasEnoughBalance, setHasEnoughBalance] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    fetch('/api/claim-prize')
-      .then(res => res.json())
-      .then(data => setPrizePool(data.prizePool))
-      .catch(console.error);
-  }, []);
-
-  useEffect(() => {
-    if (isConnected) {
-      checkBalance(ENTRY_FEE).then(setHasEnoughBalance);
-    } else {
-      setHasEnoughBalance(null);
-    }
-  }, [isConnected, checkBalance]);
-
-  // Check for win after each mark
-  useEffect(() => {
-    if (card && !hasWon) {
-      if (checkWin(card, winPattern)) {
-        setHasWon(true);
-        setAutoCall(false);
-      }
-    }
-  }, [card, winPattern, hasWon]);
-
-  const handlePayAndPlay = async () => {
-    if (!isConnected) return;
-
-    setPaymentStatus('checking');
-    setErrorMessage('');
-
-    const hasBalance = await checkBalance(ENTRY_FEE);
-    if (!hasBalance) {
-      setPaymentStatus('error');
-      setErrorMessage('Insufficient USDC balance. You need at least $0.01 USDC.');
-      return;
-    }
-
-    setPaymentStatus('signing');
-
-    const result = await pay(PAYMENT_RECIPIENT, ENTRY_FEE);
-
-    if (result.success) {
-      setPaymentStatus('success');
-      startGame();
-    } else {
-      setPaymentStatus('error');
-      setErrorMessage(result.error || 'Payment failed');
-    }
+  const handleGenerate = () => {
+    const newCards = generateMultipleCards(cardCount, gameMode);
+    setCards(newCards);
   };
 
-  const startGame = () => {
-    setCard(generateBingoCard(gameMode));
-    setCalledNumbers([]);
-    setCurrentNumber(null);
-    setHasWon(false);
-    setGameStarted(true);
-    setPaymentStatus('idle');
-    setAutoCall(false);
+  const handleAddMore = () => {
+    const newCards = generateMultipleCards(cardCount, gameMode);
+    setCards(prev => [...prev, ...newCards]);
   };
 
-  // For demo: start without payment
-  const startDemoGame = () => {
-    startGame();
+  const handleDeleteCard = (id: string) => {
+    setCards(prev => prev.filter(card => card.id !== id));
   };
 
-  const handleCallNumber = useCallback(() => {
-    const newNumber = callNumber(calledNumbers, gameMode);
-    if (newNumber) {
-      setCurrentNumber(newNumber);
-      setCalledNumbers(prev => [...prev, newNumber]);
-    }
-  }, [calledNumbers, gameMode]);
-
-  const handleMarkNumber = useCallback((number: number) => {
-    if (!card || !calledNumbers.includes(number)) return;
-
-    const updatedCard = markNumber(card, number);
-    setCard(updatedCard);
-  }, [card, calledNumbers]);
-
-  const handleClaimPrize = async () => {
-    if (!address) return;
-
-    try {
-      const response = await fetch('/api/claim-prize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cardId: card?.id,
-          winnerAddress: address,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        alert(`${data.message}\n\nPrize will be sent to: ${address}`);
-      }
-    } catch (error) {
-      console.error('Claim error:', error);
-    }
+  const handleClearAll = () => {
+    setCards([]);
   };
 
-  const handleNewCard = () => {
-    setCard(generateBingoCard(gameMode));
-    setHasWon(false);
-  };
-
-  const getPayButtonText = () => {
-    if (!isConnected) return 'Connect Wallet First';
-    if (paymentStatus === 'checking') return 'Checking Balance...';
-    if (paymentStatus === 'signing') return 'Sign in Wallet...';
-    if (paymentStatus === 'processing') return 'Processing...';
-    if (isProcessing) return 'Processing...';
-    return `Pay $${ENTRY_FEE} USDC & Play`;
+  const handlePrint = () => {
+    window.print();
   };
 
   return (
     <main className="container">
       <header className="header">
-        <div className="header-top">
-          <h1>UltraBingo</h1>
-          <ConnectWalletButton />
-        </div>
-        <p>Play Bingo, Win USDC</p>
-        <div className="badges">
-          <div className="x402-badge">Powered by x402</div>
-          <div className="ultravioleta-badge">Ultravioleta DAO</div>
-        </div>
+        <h1>UltraBingo</h1>
+        <p>Generador de Cartones de Bingo</p>
       </header>
 
-      {!gameStarted ? (
-        <div className="start-screen">
-          <div className="prize-pool">
-            <h2>Current Prize Pool</h2>
-            <div className="amount">${prizePool} USDC</div>
-            <div className="network">Base Sepolia Testnet</div>
+      {/* Control Panel */}
+      <div className="control-panel">
+        <div className="control-section">
+          <h3>Configuracion</h3>
+
+          <div className="control-group">
+            <label>Titulo del Juego</label>
+            <input
+              type="text"
+              value={gameTitle}
+              onChange={(e) => setGameTitle(e.target.value)}
+              placeholder="Nombre del juego"
+            />
           </div>
 
-          {/* Game Settings */}
-          <div className="settings-panel">
-            <h3>Game Settings</h3>
-
-            <div className="setting-group">
-              <label>Game Mode</label>
-              <div className="button-group">
-                <button
-                  className={gameMode === '1-75' ? 'active' : ''}
-                  onClick={() => setGameMode('1-75')}
-                >
-                  75-Ball (US)
-                </button>
-                <button
-                  className={gameMode === '1-90' ? 'active' : ''}
-                  onClick={() => setGameMode('1-90')}
-                >
-                  90-Ball (UK)
-                </button>
-              </div>
-            </div>
-
-            <div className="setting-group">
-              <label>Win Pattern</label>
-              <select
-                value={winPattern}
-                onChange={(e) => setWinPattern(e.target.value as WinPattern)}
+          <div className="control-group">
+            <label>Modo de Juego</label>
+            <div className="button-group">
+              <button
+                className={gameMode === '1-75' ? 'active' : ''}
+                onClick={() => setGameMode('1-75')}
               >
-                {Object.entries(WIN_PATTERNS).map(([key, desc]) => (
-                  <option key={key} value={key}>{key.replace('-', ' ').toUpperCase()}: {desc}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="setting-group">
-              <label>Auto-Call Speed</label>
-              <select
-                value={autoCallSpeed}
-                onChange={(e) => setAutoCallSpeed(Number(e.target.value))}
+                75 Bolas (USA)
+              </button>
+              <button
+                className={gameMode === '1-90' ? 'active' : ''}
+                onClick={() => setGameMode('1-90')}
               >
-                <option value={2000}>Fast (2s)</option>
-                <option value={3000}>Normal (3s)</option>
-                <option value={5000}>Slow (5s)</option>
-                <option value={8000}>Very Slow (8s)</option>
-              </select>
-            </div>
-          </div>
-
-          {isConnected && hasEnoughBalance !== null && (
-            <div className={`balance-status ${hasEnoughBalance ? 'sufficient' : 'insufficient'}`}>
-              {hasEnoughBalance
-                ? '✓ You have enough USDC to play'
-                : '✗ Insufficient USDC balance'}
-            </div>
-          )}
-
-          <div className="entry-info">
-            <p>Entry Fee: ${ENTRY_FEE} USDC</p>
-            <p className="gasless">Gasless payments via x402</p>
-
-            <div className="button-row">
-              {!isConnected ? (
-                <div className="connect-prompt">
-                  <p>Connect your wallet to play for prizes</p>
-                  <ConnectWalletButton />
-                </div>
-              ) : (
-                <button
-                  className="pay-button"
-                  onClick={handlePayAndPlay}
-                  disabled={isProcessing || (paymentStatus !== 'idle' && paymentStatus !== 'error')}
-                >
-                  {getPayButtonText()}
-                </button>
-              )}
-
-              <button className="demo-button" onClick={startDemoGame}>
-                Play Demo (Free)
+                90 Bolas (UK)
               </button>
             </div>
-
-            {paymentStatus === 'error' && errorMessage && (
-              <div className="error-message">{errorMessage}</div>
-            )}
           </div>
 
-          <div className="how-to-play">
-            <h3>How to Play</h3>
-            <ol>
-              <li>Choose your game mode and win pattern</li>
-              <li>Pay ${ENTRY_FEE} USDC or try the free demo</li>
-              <li>Click "Call Number" or enable Auto-Call</li>
-              <li>Click on your card to mark called numbers</li>
-              <li>Complete the pattern to win!</li>
-            </ol>
-          </div>
-
-          <div className="powered-by">
-            <p>Payments processed by</p>
-            <a href="https://facilitator.ultravioletadao.xyz" target="_blank" rel="noopener noreferrer">
-              Ultravioleta DAO x402 Facilitator
-            </a>
+          <div className="control-group">
+            <label>Cantidad de Cartones</label>
+            <select
+              value={cardCount}
+              onChange={(e) => setCardCount(Number(e.target.value))}
+            >
+              {[1, 2, 4, 6, 8, 10, 12, 16, 20, 24, 30].map(n => (
+                <option key={n} value={n}>{n} carton{n > 1 ? 'es' : ''}</option>
+              ))}
+            </select>
           </div>
         </div>
-      ) : (
-        <div className="game-area">
-          {/* Game Info Bar */}
-          <div className="game-info-bar">
-            <span className="info-item">Mode: {gameMode}</span>
-            <span className="info-item">Pattern: {winPattern.replace('-', ' ')}</span>
-            <span className="info-item">Numbers: {calledNumbers.length}/{gameMode === '1-75' ? 75 : 90}</span>
-          </div>
 
-          {hasWon && (
-            <div className="winner-banner">
-              <h2>BINGO! You Won!</h2>
-              <p className="prize-amount">${prizePool} USDC</p>
-              <div className="winner-buttons">
-                {isConnected && (
-                  <button onClick={handleClaimPrize} className="claim-button">
-                    Claim Prize
-                  </button>
-                )}
-                <button onClick={handleNewCard} className="new-card-button">
-                  New Card
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="game-grid">
-            <div className="card-section">
-              {card && (
-                <BingoCard
-                  card={card}
-                  onMarkNumber={handleMarkNumber}
-                  disabled={hasWon}
-                  mode={gameMode}
-                  calledNumbers={calledNumbers}
-                />
-              )}
-              <button className="new-card-btn" onClick={handleNewCard}>
-                Get New Card
+        <div className="control-actions">
+          <button className="btn-primary" onClick={handleGenerate}>
+            Generar Cartones
+          </button>
+          {cards.length > 0 && (
+            <>
+              <button className="btn-secondary" onClick={handleAddMore}>
+                Agregar Mas
               </button>
-            </div>
+              <button className="btn-secondary" onClick={handlePrint}>
+                Imprimir
+              </button>
+              <button className="btn-danger" onClick={handleClearAll}>
+                Limpiar Todo
+              </button>
+            </>
+          )}
+        </div>
 
-            <div className="caller-section">
-              <NumberCaller
-                currentNumber={currentNumber}
-                calledNumbers={calledNumbers}
-                onCallNumber={handleCallNumber}
-                disabled={hasWon}
-                mode={gameMode}
-                autoCall={autoCall}
-                autoCallSpeed={autoCallSpeed}
-                onAutoCallChange={setAutoCall}
-              />
-            </div>
+        {cards.length > 0 && (
+          <div className="stats">
+            <span>{cards.length} carton{cards.length > 1 ? 'es' : ''} generado{cards.length > 1 ? 's' : ''}</span>
           </div>
+        )}
+      </div>
 
-          <div className="game-actions">
-            <button className="back-button" onClick={() => setGameStarted(false)}>
-              Back to Menu
-            </button>
+      {/* Cards Grid */}
+      {cards.length > 0 && (
+        <div className="cards-container" ref={printRef}>
+          <div className="cards-grid">
+            {cards.map((card, index) => (
+              <div key={card.id} className="card-wrapper">
+                <div className="card-header">
+                  <span className="card-number">#{index + 1}</span>
+                  <button
+                    className="delete-btn"
+                    onClick={() => handleDeleteCard(card.id)}
+                    title="Eliminar carton"
+                  >
+                    ×
+                  </button>
+                </div>
+                <BingoCardDisplay
+                  card={card}
+                  mode={gameMode}
+                  title={gameTitle}
+                />
+              </div>
+            ))}
           </div>
+        </div>
+      )}
+
+      {cards.length === 0 && (
+        <div className="empty-state">
+          <div className="empty-icon">🎱</div>
+          <h2>No hay cartones</h2>
+          <p>Configura las opciones y genera tus cartones de bingo</p>
         </div>
       )}
 
       <style jsx>{`
         .container {
-          max-width: 1200px;
+          max-width: 1400px;
           margin: 0 auto;
           padding: 20px;
           min-height: 100vh;
@@ -361,14 +162,6 @@ export default function Home() {
         .header {
           text-align: center;
           padding: 30px 0;
-        }
-
-        .header-top {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          max-width: 900px;
-          margin: 0 auto 15px;
         }
 
         .header h1 {
@@ -383,97 +176,49 @@ export default function Home() {
         .header p {
           color: #888;
           font-size: 1.1rem;
-          margin-top: 5px;
-        }
-
-        .badges {
-          display: flex;
-          gap: 10px;
-          justify-content: center;
-          margin-top: 10px;
-        }
-
-        .x402-badge, .ultravioleta-badge {
-          padding: 6px 16px;
-          border-radius: 20px;
-          font-size: 0.85rem;
-          font-weight: bold;
-        }
-
-        .x402-badge {
-          background: linear-gradient(135deg, #6c5ce7 0%, #a29bfe 100%);
-        }
-
-        .ultravioleta-badge {
-          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
-        }
-
-        .start-screen {
-          max-width: 550px;
-          margin: 0 auto;
-          text-align: center;
-        }
-
-        .prize-pool {
-          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-          padding: 25px;
-          border-radius: 16px;
-          margin-bottom: 20px;
-          border: 2px solid #0f3460;
-        }
-
-        .prize-pool h2 {
-          color: #888;
-          font-size: 0.95rem;
-          margin-bottom: 8px;
-        }
-
-        .prize-pool .amount {
-          font-size: 2.5rem;
-          font-weight: bold;
-          color: #2775ca;
-        }
-
-        .prize-pool .network {
-          color: #666;
-          font-size: 0.85rem;
           margin-top: 8px;
         }
 
-        .settings-panel {
+        .control-panel {
           background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-          padding: 20px;
+          padding: 25px;
           border-radius: 16px;
-          margin-bottom: 20px;
           border: 2px solid #0f3460;
-          text-align: left;
+          margin-bottom: 30px;
         }
 
-        .settings-panel h3 {
+        .control-section h3 {
           color: #e94560;
-          margin-bottom: 15px;
+          margin-bottom: 20px;
           text-align: center;
         }
 
-        .setting-group {
-          margin-bottom: 15px;
+        .control-group {
+          margin-bottom: 20px;
         }
 
-        .setting-group label {
+        .control-group label {
           display: block;
           color: #888;
           font-size: 0.9rem;
           margin-bottom: 8px;
         }
 
-        .setting-group select {
+        .control-group input,
+        .control-group select {
           width: 100%;
-          padding: 10px;
+          padding: 12px;
           border-radius: 8px;
-          border: 1px solid #0f3460;
+          border: 2px solid #0f3460;
           background: #0a0a1a;
           color: #eee;
-          font-size: 0.9rem;
+          font-size: 1rem;
+        }
+
+        .control-group input:focus,
+        .control-group select:focus {
+          outline: none;
+          border-color: #00b894;
         }
 
         .button-group {
@@ -483,13 +228,14 @@ export default function Home() {
 
         .button-group button {
           flex: 1;
-          padding: 10px;
+          padding: 12px;
           border: 2px solid #0f3460;
           background: #0a0a1a;
           color: #888;
           border-radius: 8px;
           cursor: pointer;
           transition: all 0.2s;
+          font-size: 0.95rem;
         }
 
         .button-group button.active {
@@ -498,276 +244,326 @@ export default function Home() {
           border-color: #00b894;
         }
 
-        .balance-status {
-          padding: 10px 20px;
-          border-radius: 10px;
-          margin-bottom: 20px;
-          font-size: 0.9rem;
+        .button-group button:hover:not(.active) {
+          border-color: #1a4a7a;
+          color: #aaa;
         }
 
-        .balance-status.sufficient {
-          background: rgba(0, 184, 148, 0.2);
-          color: #00b894;
-          border: 1px solid #00b894;
-        }
-
-        .balance-status.insufficient {
-          background: rgba(233, 69, 96, 0.2);
-          color: #e94560;
-          border: 1px solid #e94560;
-        }
-
-        .entry-info {
-          margin-bottom: 25px;
-        }
-
-        .entry-info p {
-          margin-bottom: 8px;
-          color: #888;
-        }
-
-        .entry-info .gasless {
-          color: #00b894;
-          font-size: 0.9rem;
-        }
-
-        .button-row {
+        .control-actions {
           display: flex;
-          flex-direction: column;
           gap: 12px;
-          margin-top: 15px;
-        }
-
-        .connect-prompt p {
-          margin-bottom: 10px;
-          color: #aaa;
-        }
-
-        .pay-button {
-          padding: 16px 50px;
-          font-size: 1.1rem;
-          font-weight: bold;
-          background: linear-gradient(135deg, #2775ca 0%, #3b82f6 100%);
-          color: white;
-          border: none;
-          border-radius: 30px;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .pay-button:hover:not(:disabled) {
-          transform: scale(1.03);
-          box-shadow: 0 8px 25px rgba(39, 117, 202, 0.4);
-        }
-
-        .pay-button:disabled {
-          opacity: 0.7;
-          cursor: not-allowed;
-        }
-
-        .demo-button {
-          padding: 12px 40px;
-          font-size: 1rem;
-          background: transparent;
-          color: #888;
-          border: 2px solid #333;
-          border-radius: 30px;
-          cursor: pointer;
-          transition: all 0.3s ease;
-        }
-
-        .demo-button:hover {
-          border-color: #00b894;
-          color: #00b894;
-        }
-
-        .error-message {
-          margin-top: 15px;
-          padding: 10px 20px;
-          background: rgba(233, 69, 96, 0.2);
-          border: 1px solid #e94560;
-          border-radius: 10px;
-          color: #e94560;
-          font-size: 0.9rem;
-        }
-
-        .how-to-play {
-          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-          padding: 20px;
-          border-radius: 16px;
-          text-align: left;
-          border: 2px solid #0f3460;
-          margin-bottom: 20px;
-        }
-
-        .how-to-play h3 {
-          margin-bottom: 12px;
-          color: #e94560;
-        }
-
-        .how-to-play ol {
-          padding-left: 20px;
-          color: #aaa;
-          line-height: 1.8;
-          font-size: 0.95rem;
-        }
-
-        .powered-by {
-          color: #666;
-          font-size: 0.85rem;
-        }
-
-        .powered-by a {
-          color: #00b894;
-          text-decoration: underline;
-        }
-
-        .game-area {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 20px;
-        }
-
-        .game-info-bar {
-          display: flex;
-          gap: 20px;
-          background: #0f3460;
-          padding: 10px 25px;
-          border-radius: 30px;
-        }
-
-        .info-item {
-          color: #aaa;
-          font-size: 0.9rem;
-        }
-
-        .winner-banner {
-          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
-          padding: 25px 50px;
-          border-radius: 16px;
-          text-align: center;
-          animation: pulse 1s infinite;
-        }
-
-        .winner-banner h2 {
-          margin: 0;
-        }
-
-        .winner-banner .prize-amount {
-          font-size: 2rem;
-          font-weight: bold;
-          margin: 10px 0;
-        }
-
-        .winner-buttons {
-          display: flex;
-          gap: 10px;
-          justify-content: center;
-          margin-top: 15px;
-        }
-
-        .claim-button, .new-card-button {
-          padding: 10px 25px;
-          font-size: 1rem;
-          border: none;
-          border-radius: 20px;
-          cursor: pointer;
-          font-weight: bold;
-        }
-
-        .claim-button {
-          background: white;
-          color: #00b894;
-        }
-
-        .new-card-button {
-          background: rgba(0,0,0,0.2);
-          color: white;
-        }
-
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.01); }
-        }
-
-        .game-grid {
-          display: flex;
-          gap: 30px;
           flex-wrap: wrap;
           justify-content: center;
-          width: 100%;
+          margin-top: 25px;
         }
 
-        .card-section {
-          display: flex;
-          flex-direction: column;
-          gap: 15px;
-          align-items: center;
+        .btn-primary {
+          padding: 14px 35px;
+          font-size: 1.1rem;
+          font-weight: bold;
+          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+          color: white;
+          border: none;
+          border-radius: 30px;
+          cursor: pointer;
+          transition: all 0.3s ease;
         }
 
-        .new-card-btn {
-          padding: 10px 25px;
+        .btn-primary:hover {
+          transform: scale(1.03);
+          box-shadow: 0 8px 25px rgba(0, 184, 148, 0.4);
+        }
+
+        .btn-secondary {
+          padding: 12px 25px;
+          font-size: 1rem;
           background: #0f3460;
           color: #aaa;
-          border: 1px solid #1a4a7a;
-          border-radius: 20px;
+          border: 2px solid #1a4a7a;
+          border-radius: 30px;
           cursor: pointer;
-          font-size: 0.9rem;
+          transition: all 0.2s;
         }
 
-        .new-card-btn:hover {
+        .btn-secondary:hover {
           background: #1a4a7a;
           color: #fff;
         }
 
-        .caller-section {
-          flex: 1;
-          min-width: 320px;
-          max-width: 400px;
-        }
-
-        .game-actions {
-          margin-top: 20px;
-        }
-
-        .back-button {
-          padding: 12px 30px;
+        .btn-danger {
+          padding: 12px 25px;
+          font-size: 1rem;
           background: transparent;
-          color: #888;
-          border: 2px solid #333;
-          border-radius: 25px;
+          color: #e94560;
+          border: 2px solid #e94560;
+          border-radius: 30px;
           cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-danger:hover {
+          background: #e94560;
+          color: #fff;
+        }
+
+        .stats {
+          text-align: center;
+          margin-top: 20px;
+          color: #00b894;
           font-size: 0.95rem;
         }
 
-        .back-button:hover {
-          border-color: #e94560;
-          color: #e94560;
+        .cards-container {
+          margin-top: 20px;
+        }
+
+        .cards-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+          gap: 25px;
+          justify-items: center;
+        }
+
+        .card-wrapper {
+          position: relative;
+        }
+
+        .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 8px;
+          padding: 0 5px;
+        }
+
+        .card-number {
+          color: #888;
+          font-size: 0.9rem;
+        }
+
+        .delete-btn {
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+          border: none;
+          background: #e94560;
+          color: white;
+          font-size: 1.2rem;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s;
+        }
+
+        .delete-btn:hover {
+          transform: scale(1.1);
+          background: #ff6b6b;
+        }
+
+        .empty-state {
+          text-align: center;
+          padding: 60px 20px;
+          color: #666;
+        }
+
+        .empty-icon {
+          font-size: 4rem;
+          margin-bottom: 20px;
+        }
+
+        .empty-state h2 {
+          color: #888;
+          margin-bottom: 10px;
+        }
+
+        .empty-state p {
+          color: #666;
+        }
+
+        @media print {
+          .header, .control-panel, .card-header, .empty-state {
+            display: none !important;
+          }
+
+          .container {
+            padding: 0;
+            max-width: 100%;
+          }
+
+          .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            page-break-inside: avoid;
+          }
+
+          .card-wrapper {
+            page-break-inside: avoid;
+          }
         }
 
         @media (max-width: 768px) {
-          .header-top {
+          .button-group {
             flex-direction: column;
-            gap: 15px;
           }
 
-          .game-grid {
+          .control-actions {
             flex-direction: column;
-            align-items: center;
           }
 
-          .game-info-bar {
-            flex-wrap: wrap;
-            justify-content: center;
-          }
-
-          .badges {
-            flex-direction: column;
-            align-items: center;
+          .cards-grid {
+            grid-template-columns: 1fr;
           }
         }
       `}</style>
     </main>
+  );
+}
+
+// Componente para mostrar un carton de bingo
+function BingoCardDisplay({
+  card,
+  mode,
+  title,
+}: {
+  card: BingoCardType;
+  mode: GameMode;
+  title: string;
+}) {
+  const headers = mode === '1-75' ? ['B', 'I', 'N', 'G', 'O'] : null;
+  const is75Mode = mode === '1-75';
+
+  return (
+    <div className={`bingo-card ${is75Mode ? 'mode-75' : 'mode-90'}`}>
+      <div className="card-title">{title}</div>
+
+      {headers && (
+        <div className="bingo-header">
+          {headers.map((letter) => (
+            <div key={letter} className="bingo-cell header">
+              {letter}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {card.numbers.map((row, rowIndex) => (
+        <div key={rowIndex} className="bingo-row">
+          {row.map((number, colIndex) => {
+            const isFree = number === null;
+
+            return (
+              <div
+                key={`${rowIndex}-${colIndex}`}
+                className={`bingo-cell ${isFree ? 'free' : ''}`}
+              >
+                {isFree ? 'FREE' : number}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+
+      <div className="card-id">ID: {card.id.slice(0, 8)}</div>
+
+      <style jsx>{`
+        .bingo-card {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          padding: 15px;
+          border-radius: 12px;
+          border: 2px solid #0f3460;
+        }
+
+        .card-title {
+          text-align: center;
+          font-weight: bold;
+          color: #e94560;
+          font-size: 1.2rem;
+          margin-bottom: 10px;
+        }
+
+        .bingo-header, .bingo-row {
+          display: flex;
+          gap: 3px;
+        }
+
+        .mode-75 .bingo-cell {
+          width: 55px;
+          height: 55px;
+          font-size: 1.1rem;
+        }
+
+        .mode-90 .bingo-cell {
+          width: 38px;
+          height: 45px;
+          font-size: 0.95rem;
+        }
+
+        .bingo-cell {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-weight: bold;
+          border-radius: 6px;
+          background: #0f3460;
+          color: #eee;
+        }
+
+        .bingo-cell.header {
+          background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
+          color: white;
+          font-size: 1.3rem;
+        }
+
+        .bingo-cell.free {
+          background: linear-gradient(135deg, #fdcb6e 0%, #f39c12 100%);
+          color: #1a1a2e;
+          font-size: 0.65rem;
+        }
+
+        .card-id {
+          text-align: center;
+          font-size: 0.7rem;
+          color: #555;
+          margin-top: 8px;
+        }
+
+        @media print {
+          .bingo-card {
+            background: white;
+            border: 2px solid #333;
+            padding: 10px;
+          }
+
+          .card-title {
+            color: #333;
+          }
+
+          .bingo-cell {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #ccc;
+          }
+
+          .bingo-cell.header {
+            background: #e94560;
+            color: white;
+          }
+
+          .bingo-cell.free {
+            background: #fdcb6e;
+            color: #333;
+          }
+
+          .card-id {
+            color: #999;
+          }
+        }
+      `}</style>
+    </div>
   );
 }
