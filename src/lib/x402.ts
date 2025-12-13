@@ -16,6 +16,37 @@ export const USDC_ADDRESSES = {
 // Ultravioleta DAO x402 Facilitator
 export const FACILITATOR_URL = 'https://facilitator.ultravioletadao.xyz';
 
+// x402 Payment Payload interface (EVM)
+export interface X402PaymentPayload {
+  x402Version: number;
+  scheme: 'exact';
+  network: string;
+  payload: {
+    signature: string;
+    authorization: {
+      from: string;
+      to: string;
+      value: string;
+      validAfter: string;
+      validBefore: string;
+      nonce: string;
+    };
+  };
+}
+
+// x402 Payment Requirements interface
+export interface X402PaymentRequirements {
+  scheme: 'exact';
+  network: string;
+  maxAmountRequired: string;
+  resource: string;
+  description: string;
+  mimeType: string;
+  payTo: string;
+  maxTimeoutSeconds: number;
+  asset: string;
+}
+
 export interface PaymentDetails {
   amount: string;
   currency: string;
@@ -41,25 +72,25 @@ export interface X402Response {
 
 // Default configuration for the Bingo game payments
 export const PAYMENT_CONFIG = {
-  recipient: process.env.PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000',
+  recipient: process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000',
   network: process.env.NEXT_PUBLIC_PAYMENT_NETWORK || 'base-sepolia',
   currency: 'USDC',
-  asset: USDC_ADDRESSES.baseSepolia, // Default to testnet
+  asset: USDC_ADDRESSES.baseSepolia,
   entryFee: '0.01', // Entry fee: $0.01 USDC (testing)
-  prizePoolPercentage: 90, // 90% goes to prize pool
+  prizePoolPercentage: 90,
   facilitator: FACILITATOR_URL,
-  decimals: 6, // USDC has 6 decimals
+  decimals: 6,
 };
 
 // Get the appropriate chain config
 export function getChainConfig(network: string) {
   switch (network) {
     case 'base':
-      return { chain: base, usdc: USDC_ADDRESSES.base };
+      return { chain: base, usdc: USDC_ADDRESSES.base, networkId: '8453' };
     case 'base-sepolia':
-      return { chain: baseSepolia, usdc: USDC_ADDRESSES.baseSepolia };
+      return { chain: baseSepolia, usdc: USDC_ADDRESSES.baseSepolia, networkId: '84532' };
     default:
-      return { chain: baseSepolia, usdc: USDC_ADDRESSES.baseSepolia };
+      return { chain: baseSepolia, usdc: USDC_ADDRESSES.baseSepolia, networkId: '84532' };
   }
 }
 
@@ -89,61 +120,85 @@ export function createPaymentRequired(amount: string, description: string): X402
   };
 }
 
+// Build payment requirements for facilitator
+export function buildPaymentRequirements(): X402PaymentRequirements {
+  return {
+    scheme: 'exact',
+    network: PAYMENT_CONFIG.network,
+    maxAmountRequired: parseUnits(PAYMENT_CONFIG.entryFee, 6).toString(),
+    resource: 'https://ultrabingo.app/api/pay-entry',
+    description: 'UltraBingo game entry fee',
+    mimeType: 'application/json',
+    payTo: PAYMENT_CONFIG.recipient,
+    maxTimeoutSeconds: 60,
+    asset: PAYMENT_CONFIG.asset,
+  };
+}
+
 // Verify payment via Ultravioleta facilitator
 export async function verifyPaymentWithFacilitator(
-  paymentHeader: string
-): Promise<{ valid: boolean; error?: string }> {
+  paymentPayload: X402PaymentPayload
+): Promise<{ isValid: boolean; payer?: string; invalidReason?: string }> {
   try {
     const response = await fetch(`${FACILITATOR_URL}/verify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Payment': btoa(JSON.stringify(paymentPayload)),
       },
       body: JSON.stringify({
-        payment: paymentHeader,
-        recipient: PAYMENT_CONFIG.recipient,
-        amount: parseUnits(PAYMENT_CONFIG.entryFee, 6).toString(),
-        asset: PAYMENT_CONFIG.asset,
-        network: PAYMENT_CONFIG.network,
+        requirements: buildPaymentRequirements(),
       }),
     });
 
-    if (response.ok) {
-      return { valid: true };
+    const result = await response.json();
+    console.log('Verify response:', result);
+
+    if (response.ok && result.isValid) {
+      return { isValid: true, payer: result.payer };
     }
 
-    const error = await response.json();
-    return { valid: false, error: error.message };
+    return { isValid: false, invalidReason: result.invalidReason || 'Verification failed' };
   } catch (error) {
     console.error('Facilitator verification error:', error);
-    return { valid: false, error: 'Verification request failed' };
+    return { isValid: false, invalidReason: 'Verification request failed' };
   }
 }
 
 // Settle payment via Ultravioleta facilitator (gasless)
 export async function settlePaymentWithFacilitator(
-  paymentHeader: string
-): Promise<{ success: boolean; txHash?: string; error?: string }> {
+  paymentPayload: X402PaymentPayload
+): Promise<{ success: boolean; transaction?: string; network?: string; error?: string }> {
   try {
+    const requestBody = {
+      x402Version: 1,
+      paymentPayload,
+      paymentRequirements: buildPaymentRequirements(),
+    };
+
+    console.log('Settle request:', JSON.stringify(requestBody, null, 2));
+
     const response = await fetch(`${FACILITATOR_URL}/settle`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'X-Payment': btoa(JSON.stringify(paymentPayload)),
       },
-      body: JSON.stringify({
-        payment: paymentHeader,
-        recipient: PAYMENT_CONFIG.recipient,
-        network: PAYMENT_CONFIG.network,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     const result = await response.json();
+    console.log('Settle response:', result);
 
-    if (response.ok) {
-      return { success: true, txHash: result.txHash };
+    if (response.ok && result.success) {
+      return {
+        success: true,
+        transaction: result.transaction,
+        network: result.network,
+      };
     }
 
-    return { success: false, error: result.message };
+    return { success: false, error: result.errorReason || result.error || 'Settlement failed' };
   } catch (error) {
     console.error('Facilitator settlement error:', error);
     return { success: false, error: 'Settlement request failed' };
@@ -169,8 +224,6 @@ export async function verifyPaymentOnChain(
       return false;
     }
 
-    // For USDC transfers, we need to check the Transfer event logs
-    // This is a simplified check - in production, decode the logs properly
     return receipt.status === 'success';
   } catch (error) {
     console.error('On-chain payment verification error:', error);
@@ -189,7 +242,7 @@ export function calculatePrize(totalPool: string, numWinners: number = 1): strin
 export function generateEntryPaymentRequest(): X402Response {
   return createPaymentRequired(
     PAYMENT_CONFIG.entryFee,
-    'UltraBingo game entry fee - $1 USDC'
+    `UltraBingo game entry fee - $${PAYMENT_CONFIG.entryFee} USDC`
   );
 }
 

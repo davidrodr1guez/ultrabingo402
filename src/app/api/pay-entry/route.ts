@@ -5,6 +5,7 @@ import {
   settlePaymentWithFacilitator,
   PAYMENT_CONFIG,
   FACILITATOR_URL,
+  X402PaymentPayload,
 } from '@/lib/x402';
 
 // In-memory store for demo (use a database in production)
@@ -21,7 +22,6 @@ export async function POST(request: NextRequest) {
 
       // Legacy support: check for txHash in body
       if (body.txHash) {
-        // Direct transaction verification (fallback)
         return NextResponse.json({
           success: true,
           message: 'Payment verified via transaction hash',
@@ -40,41 +40,89 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Verify payment with Ultravioleta facilitator
-    const verification = await verifyPaymentWithFacilitator(paymentHeader);
-
-    if (!verification.valid) {
+    // Decode the payment payload
+    let paymentPayload: X402PaymentPayload;
+    try {
+      paymentPayload = JSON.parse(atob(paymentHeader));
+      console.log('Received payment payload:', JSON.stringify(paymentPayload, null, 2));
+    } catch (e) {
       return NextResponse.json(
-        { error: 'Payment verification failed', details: verification.error },
+        { error: 'Invalid payment header format' },
         { status: 400 }
       );
     }
 
-    // Settle the payment (gasless via facilitator)
-    const settlement = await settlePaymentWithFacilitator(paymentHeader);
+    // Validate payload structure
+    if (!paymentPayload.payload?.signature || !paymentPayload.payload?.authorization) {
+      return NextResponse.json(
+        { error: 'Missing signature or authorization in payment' },
+        { status: 400 }
+      );
+    }
+
+    // Step 1: Verify payment with facilitator
+    console.log('Verifying payment with facilitator...');
+    const verification = await verifyPaymentWithFacilitator(paymentPayload);
+
+    if (!verification.isValid) {
+      console.log('Verification failed:', verification.invalidReason);
+
+      // For testing/demo: Accept the signed payment even if facilitator verification fails
+      // This allows testing without real USDC
+      if (process.env.NODE_ENV === 'development' || process.env.DEMO_MODE === 'true') {
+        console.log('Demo mode: Accepting payment without facilitator verification');
+        const { authorization } = paymentPayload.payload;
+        paidPlayers.set(authorization.from.toLowerCase(), true);
+
+        return NextResponse.json({
+          success: true,
+          message: 'Payment signature accepted (demo mode)',
+          gameToken: crypto.randomUUID(),
+          demoMode: true,
+          payment: {
+            from: authorization.from,
+            to: authorization.to,
+            value: authorization.value,
+            network: paymentPayload.network,
+          },
+        });
+      }
+
+      return NextResponse.json(
+        { error: 'Payment verification failed', details: verification.invalidReason },
+        { status: 400 }
+      );
+    }
+
+    // Step 2: Settle payment on-chain via facilitator
+    console.log('Settling payment with facilitator...');
+    const settlement = await settlePaymentWithFacilitator(paymentPayload);
 
     if (!settlement.success) {
+      console.log('Settlement failed:', settlement.error);
       return NextResponse.json(
         { error: 'Payment settlement failed', details: settlement.error },
         { status: 400 }
       );
     }
 
-    // Extract player address from payment header if available
-    try {
-      const paymentData = JSON.parse(atob(paymentHeader.split('.')[1] || '{}'));
-      if (paymentData.from) {
-        paidPlayers.set(paymentData.from.toLowerCase(), true);
-      }
-    } catch {
-      // Ignore parsing errors
-    }
+    // Store player as paid
+    const { authorization } = paymentPayload.payload;
+    paidPlayers.set(authorization.from.toLowerCase(), true);
+
+    console.log(`Payment settled! TX: ${settlement.transaction}`);
 
     return NextResponse.json({
       success: true,
       message: 'Payment verified and settled via Ultravioleta x402!',
       gameToken: crypto.randomUUID(),
-      txHash: settlement.txHash,
+      transaction: settlement.transaction,
+      network: settlement.network,
+      payment: {
+        from: authorization.from,
+        to: authorization.to,
+        value: authorization.value,
+      },
     });
 
   } catch (error) {
@@ -87,7 +135,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  // Return payment information
   const paymentRequest = generateEntryPaymentRequest();
 
   return NextResponse.json({
