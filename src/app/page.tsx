@@ -8,7 +8,7 @@ import ConnectWalletButton from '@/components/ConnectWalletButton';
 import { useX402Payment } from '@/hooks/useX402Payment';
 import { generateBingoCard, markNumber, checkWin, callNumber, BingoCard as BingoCardType } from '@/lib/bingo';
 
-const ENTRY_FEE = '1.00';
+const ENTRY_FEE = '0.01';
 const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000';
 
 export default function Home() {

@@ -45,7 +45,7 @@ export const PAYMENT_CONFIG = {
   network: process.env.NEXT_PUBLIC_PAYMENT_NETWORK || 'base-sepolia',
   currency: 'USDC',
   asset: USDC_ADDRESSES.baseSepolia, // Default to testnet
-  entryFee: '1.00', // Entry fee: $1 USDC
+  entryFee: '0.01', // Entry fee: $0.01 USDC (testing)
   prizePoolPercentage: 90, // 90% goes to prize pool
   facilitator: FACILITATOR_URL,
   decimals: 6, // USDC has 6 decimals
