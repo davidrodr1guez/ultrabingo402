@@ -1,56 +1,73 @@
 'use client';
 
 import { useState, useCallback, useEffect } from 'react';
+import { useAccount } from 'wagmi';
 import BingoCard from '@/components/BingoCard';
 import NumberCaller from '@/components/NumberCaller';
+import ConnectWalletButton from '@/components/ConnectWalletButton';
+import { useX402Payment } from '@/hooks/useX402Payment';
 import { generateBingoCard, markNumber, checkWin, callNumber, BingoCard as BingoCardType } from '@/lib/bingo';
 
+const ENTRY_FEE = '1.00';
+const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000';
+
 export default function Home() {
+  const { isConnected, address } = useAccount();
+  const { pay, checkBalance, isProcessing } = useX402Payment();
+
   const [gameStarted, setGameStarted] = useState(false);
   const [card, setCard] = useState<BingoCardType | null>(null);
   const [calledNumbers, setCalledNumbers] = useState<number[]>([]);
   const [currentNumber, setCurrentNumber] = useState<number | null>(null);
   const [hasWon, setHasWon] = useState(false);
-  const [isPaid, setIsPaid] = useState(false);
   const [prizePool, setPrizePool] = useState('100.00');
-
-  const ENTRY_FEE = '1.00'; // $1 USDC
+  const [paymentStatus, setPaymentStatus] = useState<'idle' | 'checking' | 'signing' | 'processing' | 'success' | 'error'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [hasEnoughBalance, setHasEnoughBalance] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Fetch current prize pool
     fetch('/api/claim-prize')
       .then(res => res.json())
       .then(data => setPrizePool(data.prizePool))
       .catch(console.error);
   }, []);
 
+  // Check balance when wallet connects
+  useEffect(() => {
+    if (isConnected) {
+      checkBalance(ENTRY_FEE).then(setHasEnoughBalance);
+    } else {
+      setHasEnoughBalance(null);
+    }
+  }, [isConnected, checkBalance]);
+
   const handlePayAndPlay = async () => {
-    // x402 payment integration with Ultravioleta facilitator
-    try {
-      const response = await fetch('/api/pay-entry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
+    if (!isConnected) {
+      return;
+    }
 
-      if (response.status === 402) {
-        // Handle x402 payment required
-        const paymentDetails = await response.json();
-        console.log('Payment required:', paymentDetails);
-        // Show payment modal with USDC details
-        alert(`Payment Required!\n\nAmount: $${ENTRY_FEE} USDC\nNetwork: Base Sepolia\nFacilitator: Ultravioleta DAO\n\nConnect your wallet to pay with USDC (gasless via x402)`);
-        return;
-      }
+    setPaymentStatus('checking');
+    setErrorMessage('');
 
-      if (response.ok) {
-        setIsPaid(true);
-        startGame();
-      }
-    } catch (error) {
-      console.error('Payment error:', error);
-      // For demo purposes, start the game anyway
-      setIsPaid(true);
+    // Check balance
+    const hasBalance = await checkBalance(ENTRY_FEE);
+    if (!hasBalance) {
+      setPaymentStatus('error');
+      setErrorMessage('Insufficient USDC balance. You need at least $1 USDC.');
+      return;
+    }
+
+    setPaymentStatus('signing');
+
+    // Process payment
+    const result = await pay(PAYMENT_RECIPIENT, ENTRY_FEE);
+
+    if (result.success) {
+      setPaymentStatus('success');
       startGame();
+    } else {
+      setPaymentStatus('error');
+      setErrorMessage(result.error || 'Payment failed');
     }
   };
 
@@ -60,6 +77,7 @@ export default function Home() {
     setCurrentNumber(null);
     setHasWon(false);
     setGameStarted(true);
+    setPaymentStatus('idle');
   };
 
   const handleCallNumber = useCallback(() => {
@@ -82,29 +100,43 @@ export default function Home() {
   }, [card, calledNumbers]);
 
   const handleClaimPrize = async () => {
+    if (!address) return;
+
     try {
       const response = await fetch('/api/claim-prize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           cardId: card?.id,
-          winnerAddress: '0x...', // In production, get from wallet
+          winnerAddress: address,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        alert(`${data.message}\n\nPrize sent via Ultravioleta x402 facilitator!`);
+        alert(`${data.message}\n\nPrize will be sent to: ${address}`);
       }
     } catch (error) {
       console.error('Claim error:', error);
     }
   };
 
+  const getPayButtonText = () => {
+    if (!isConnected) return 'Connect Wallet First';
+    if (paymentStatus === 'checking') return 'Checking Balance...';
+    if (paymentStatus === 'signing') return 'Sign in Wallet...';
+    if (paymentStatus === 'processing') return 'Processing...';
+    if (isProcessing) return 'Processing...';
+    return `Pay $${ENTRY_FEE} USDC & Play`;
+  };
+
   return (
     <main className="container">
       <header className="header">
-        <h1>UltraBingo</h1>
+        <div className="header-top">
+          <h1>UltraBingo</h1>
+          <ConnectWalletButton />
+        </div>
         <p>Play Bingo, Win USDC</p>
         <div className="badges">
           <div className="x402-badge">Powered by x402</div>
@@ -117,23 +149,48 @@ export default function Home() {
           <div className="prize-pool">
             <h2>Current Prize Pool</h2>
             <div className="amount">${prizePool} USDC</div>
-            <div className="network">Base Network</div>
+            <div className="network">Base Sepolia Testnet</div>
           </div>
+
+          {isConnected && hasEnoughBalance !== null && (
+            <div className={`balance-status ${hasEnoughBalance ? 'sufficient' : 'insufficient'}`}>
+              {hasEnoughBalance
+                ? '✓ You have enough USDC to play'
+                : '✗ Insufficient USDC balance'}
+            </div>
+          )}
 
           <div className="entry-info">
             <p>Entry Fee: ${ENTRY_FEE} USDC</p>
             <p className="gasless">Gasless payments via x402</p>
-            <button className="pay-button" onClick={handlePayAndPlay}>
-              Pay & Play
-            </button>
+
+            {!isConnected ? (
+              <div className="connect-prompt">
+                <p>Connect your wallet to play</p>
+                <ConnectWalletButton />
+              </div>
+            ) : (
+              <button
+                className="pay-button"
+                onClick={handlePayAndPlay}
+                disabled={isProcessing || paymentStatus !== 'idle' && paymentStatus !== 'error'}
+              >
+                {getPayButtonText()}
+              </button>
+            )}
+
+            {paymentStatus === 'error' && errorMessage && (
+              <div className="error-message">{errorMessage}</div>
+            )}
           </div>
 
           <div className="how-to-play">
             <h3>How to Play</h3>
             <ol>
+              <li>Connect your wallet (MetaMask, etc.)</li>
               <li>Pay ${ENTRY_FEE} USDC entry fee (gasless!)</li>
               <li>Get your unique Bingo card</li>
-              <li>Mark numbers as they are called</li>
+              <li>Click "Call Number" and mark matches</li>
               <li>Get 5 in a row to win the prize pool!</li>
             </ol>
           </div>
@@ -195,12 +252,21 @@ export default function Home() {
           padding: 40px 0;
         }
 
+        .header-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          max-width: 800px;
+          margin: 0 auto 20px;
+        }
+
         .header h1 {
-          font-size: 3rem;
+          font-size: 2.5rem;
           background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
+          margin: 0;
         }
 
         .header p {
@@ -242,7 +308,7 @@ export default function Home() {
           background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
           padding: 30px;
           border-radius: 16px;
-          margin-bottom: 30px;
+          margin-bottom: 20px;
           border: 2px solid #0f3460;
         }
 
@@ -264,6 +330,25 @@ export default function Home() {
           margin-top: 10px;
         }
 
+        .balance-status {
+          padding: 10px 20px;
+          border-radius: 10px;
+          margin-bottom: 20px;
+          font-size: 0.9rem;
+        }
+
+        .balance-status.sufficient {
+          background: rgba(0, 184, 148, 0.2);
+          color: #00b894;
+          border: 1px solid #00b894;
+        }
+
+        .balance-status.insufficient {
+          background: rgba(233, 69, 96, 0.2);
+          color: #e94560;
+          border: 1px solid #e94560;
+        }
+
         .entry-info {
           margin-bottom: 30px;
         }
@@ -278,10 +363,19 @@ export default function Home() {
           font-size: 0.9rem;
         }
 
+        .connect-prompt {
+          margin-top: 20px;
+        }
+
+        .connect-prompt p {
+          margin-bottom: 15px;
+          color: #aaa;
+        }
+
         .pay-button {
-          margin-top: 10px;
+          margin-top: 15px;
           padding: 20px 60px;
-          font-size: 1.3rem;
+          font-size: 1.2rem;
           font-weight: bold;
           background: linear-gradient(135deg, #2775ca 0%, #3b82f6 100%);
           color: white;
@@ -291,9 +385,25 @@ export default function Home() {
           transition: all 0.3s ease;
         }
 
-        .pay-button:hover {
+        .pay-button:hover:not(:disabled) {
           transform: scale(1.05);
           box-shadow: 0 10px 30px rgba(39, 117, 202, 0.4);
+        }
+
+        .pay-button:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        .error-message {
+          margin-top: 15px;
+          padding: 10px 20px;
+          background: rgba(233, 69, 96, 0.2);
+          border: 1px solid #e94560;
+          border-radius: 10px;
+          color: #e94560;
+          font-size: 0.9rem;
         }
 
         .how-to-play {
@@ -393,6 +503,11 @@ export default function Home() {
         }
 
         @media (max-width: 768px) {
+          .header-top {
+            flex-direction: column;
+            gap: 20px;
+          }
+
           .game-grid {
             flex-direction: column;
           }
