@@ -94,9 +94,17 @@ export async function POST(request: NextRequest) {
       network: paymentPayload.network,
     });
 
+    // Build payment requirements with the actual amount
+    const totalPrice = calculatePrice(cards?.length || cardCount);
+    const paymentRequirements = {
+      ...buildPaymentRequirements(),
+      maxAmountRequired: authorization.value, // Use the actual signed amount
+    };
+
     // Step 1: Verify payment with facilitator
     console.log('Verifying payment with facilitator...');
-    const verification = await verifyPaymentWithFacilitator(paymentPayload);
+    console.log('Payment requirements:', JSON.stringify(paymentRequirements, null, 2));
+    const verification = await verifyPaymentWithFacilitator(paymentPayload, paymentRequirements);
 
     if (!verification.isValid) {
       console.log('Verification failed:', verification.invalidReason);
@@ -108,7 +116,7 @@ export async function POST(request: NextRequest) {
 
     // Step 2: Settle payment on-chain via facilitator
     console.log('Settling payment with facilitator...');
-    const settlement = await settlePaymentWithFacilitator(paymentPayload);
+    const settlement = await settlePaymentWithFacilitator(paymentPayload, paymentRequirements);
 
     if (!settlement.success) {
       console.log('Settlement failed:', settlement.error);

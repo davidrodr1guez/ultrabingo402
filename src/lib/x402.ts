@@ -13,8 +13,8 @@ export const USDC_ADDRESSES = {
   polygon: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
 } as const;
 
-// Ultravioleta DAO x402 Facilitator
-export const FACILITATOR_URL = 'https://facilitator.ultravioletadao.xyz';
+// x402.org Facilitator (supports Base Sepolia)
+export const FACILITATOR_URL = 'https://x402.org/facilitator';
 
 // x402 Payment Payload interface (EVM)
 export interface X402PaymentPayload {
@@ -150,19 +150,23 @@ export function buildPaymentRequirements(): X402PaymentRequirements {
   };
 }
 
-// Verify payment via Ultravioleta facilitator
+// Verify payment via x402.org facilitator
 export async function verifyPaymentWithFacilitator(
-  paymentPayload: X402PaymentPayload
+  paymentPayload: X402PaymentPayload,
+  paymentRequirements?: X402PaymentRequirements
 ): Promise<{ isValid: boolean; payer?: string; invalidReason?: string }> {
   try {
+    const requirements = paymentRequirements || buildPaymentRequirements();
+
     const response = await fetch(`${FACILITATOR_URL}/verify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Payment': btoa(JSON.stringify(paymentPayload)),
       },
       body: JSON.stringify({
-        requirements: buildPaymentRequirements(),
+        x402Version: 1,
+        paymentPayload,
+        paymentRequirements: requirements,
       }),
     });
 
@@ -173,22 +177,25 @@ export async function verifyPaymentWithFacilitator(
       return { isValid: true, payer: result.payer };
     }
 
-    return { isValid: false, invalidReason: result.invalidReason || 'Verification failed' };
+    return { isValid: false, invalidReason: result.invalidReason || result.error || 'Verification failed' };
   } catch (error) {
     console.error('Facilitator verification error:', error);
     return { isValid: false, invalidReason: 'Verification request failed' };
   }
 }
 
-// Settle payment via Ultravioleta facilitator (gasless)
+// Settle payment via x402.org facilitator (gasless)
 export async function settlePaymentWithFacilitator(
-  paymentPayload: X402PaymentPayload
-): Promise<{ success: boolean; transaction?: string; network?: string; error?: string }> {
+  paymentPayload: X402PaymentPayload,
+  paymentRequirements?: X402PaymentRequirements
+): Promise<{ success: boolean; transaction?: string; network?: string; payer?: string; error?: string }> {
   try {
+    const requirements = paymentRequirements || buildPaymentRequirements();
+
     const requestBody = {
       x402Version: 1,
       paymentPayload,
-      paymentRequirements: buildPaymentRequirements(),
+      paymentRequirements: requirements,
     };
 
     console.log('Settle request:', JSON.stringify(requestBody, null, 2));
@@ -197,7 +204,6 @@ export async function settlePaymentWithFacilitator(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Payment': btoa(JSON.stringify(paymentPayload)),
       },
       body: JSON.stringify(requestBody),
     });
@@ -210,6 +216,7 @@ export async function settlePaymentWithFacilitator(
         success: true,
         transaction: result.transaction,
         network: result.network,
+        payer: result.payer,
       };
     }
 
