@@ -11,9 +11,15 @@ import {
   GameMode,
 } from '@/lib/bingo';
 import { registerCards } from '@/lib/cardRegistry';
+import { useX402Payment } from '@/hooks/useX402Payment';
+
+// Payment recipient address
+const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x97a3935fBF2d4ac9437dc10e62722D1549C8C43A';
+const PRICE_PER_CARD = 1.00; // $1.00 USDC per card
 
 export default function Home() {
   const { isConnected, address } = useAccount();
+  const { createPayment, isProcessing: isSigningPayment } = useX402Payment();
   const [cards, setCards] = useState<BingoCardType[]>([]);
   const [gameMode, setGameMode] = useState<GameMode>('1-75');
   const [cardCount, setCardCount] = useState(1);
@@ -51,42 +57,48 @@ export default function Home() {
     setPaymentError(null);
 
     try {
-      // Call backend to initiate payment
+      const totalAmount = (cards.length * PRICE_PER_CARD).toFixed(2);
+
+      // Step 1: Create and sign the x402 payment
+      console.log('Creating x402 payment for', totalAmount, 'USDC...');
+      const paymentResult = await createPayment(PAYMENT_RECIPIENT, totalAmount);
+
+      if (!paymentResult.success || !paymentResult.payload) {
+        setPaymentError(paymentResult.error || 'Failed to sign payment');
+        return;
+      }
+
+      console.log('Payment signed, submitting to server...');
+
+      // Step 2: Submit payment to backend with the signed payload
       const response = await fetch('/api/pay-entry', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Payment': paymentResult.payload,
         },
         body: JSON.stringify({
+          cards: cards.map(c => ({ id: c.id, numbers: c.numbers })),
           cardCount: cards.length,
           walletAddress: address,
+          gameMode,
+          gameTitle,
         }),
       });
 
-      if (response.status === 402) {
-        // Payment required - for now, simulate payment in demo mode
-        // Felipe will implement the real payment flow in backend
-        console.log('Payment required, simulating demo payment...');
+      const data = await response.json();
 
-        // Simulate successful payment for demo
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        // Register cards after payment
+      if (response.ok && data.success) {
+        console.log('Payment confirmed!', data.transaction ? `TX: ${data.transaction}` : '');
+        // Register cards after successful payment
         registerCards(cards, address || 'anonymous', gameMode, gameTitle);
         setIsPaid(true);
-      } else if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          // Register cards after payment
-          registerCards(cards, address || 'anonymous', gameMode, gameTitle);
-          setIsPaid(true);
-        }
       } else {
-        const error = await response.json();
-        setPaymentError(error.error || 'Payment failed');
+        setPaymentError(data.error || data.details || 'Payment failed');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Payment error:', error);
-      setPaymentError('Error processing payment');
+      setPaymentError(error.message || 'Error processing payment');
     } finally {
       setIsProcessingPayment(false);
     }
@@ -135,7 +147,7 @@ export default function Home() {
     window.print();
   };
 
-  const totalPrice = cards.length * 0.01; // $0.01 per card
+  const totalPrice = cards.length * PRICE_PER_CARD; // $1.00 USDC per card
 
   return (
     <main className="container">
@@ -231,7 +243,7 @@ export default function Home() {
             <p className="price">
               Total: <span>${totalPrice.toFixed(2)} USDC</span>
             </p>
-            <p className="price-detail">{cards.length} carton{cards.length > 1 ? 'es' : ''} × $0.01 USDC</p>
+            <p className="price-detail">{cards.length} carton{cards.length > 1 ? 'es' : ''} × $1.00 USDC</p>
           </div>
 
           {!isConnected ? (
@@ -247,12 +259,12 @@ export default function Home() {
               <button
                 className="btn-pay"
                 onClick={handlePayment}
-                disabled={isProcessingPayment}
+                disabled={isProcessingPayment || isSigningPayment}
               >
-                {isProcessingPayment ? (
+                {isProcessingPayment || isSigningPayment ? (
                   <>
                     <span className="spinner"></span>
-                    Procesando...
+                    {isSigningPayment ? 'Firma en wallet...' : 'Procesando pago...'}
                   </>
                 ) : (
                   <>Pagar ${totalPrice.toFixed(2)} USDC</>
