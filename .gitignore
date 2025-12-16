@@ -36,3 +36,7 @@ yarn-error.log*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Database
+*.db
+ultrabingo.db

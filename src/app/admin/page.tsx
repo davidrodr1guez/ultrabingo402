@@ -1,14 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
-import { getBingoLetter, GameMode, WinPattern } from '@/lib/bingo';
-import {
-  getRegisteredCards,
-  verifyBingo,
-  RegisteredCard,
-  clearRegistry
-} from '@/lib/cardRegistry';
+import { getBingoLetter, GameMode, WinPattern, checkWin } from '@/lib/bingo';
+
+// Types for API responses
+interface DbCard {
+  id: string;
+  numbers: number[][];
+  owner: string;
+  game_mode: string;
+  game_title: string;
+  purchased_at: string;
+  payment_status: string;
+}
 
 export default function AdminPanel() {
   const [gameMode, setGameMode] = useState<GameMode>('1-75');
@@ -21,26 +26,42 @@ export default function AdminPanel() {
   const [verifyCardId, setVerifyCardId] = useState('');
   const [verifyResult, setVerifyResult] = useState<{
     found: boolean;
-    card?: RegisteredCard;
+    card?: DbCard;
     hasBingo: boolean;
     markedNumbers: number[];
   } | null>(null);
   const [winPattern, setWinPattern] = useState<WinPattern>('line');
 
   // Lista de cartones registrados
-  const [registeredCards, setRegisteredCards] = useState<RegisteredCard[]>([]);
+  const [registeredCards, setRegisteredCards] = useState<DbCard[]>([]);
   const [showCardsList, setShowCardsList] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Game ID for syncing with backend
+  const [gameId, setGameId] = useState<string | null>(null);
 
   const maxNumber = gameMode === '1-75' ? 75 : 90;
 
-  // Cargar cartones registrados
-  useEffect(() => {
-    setRegisteredCards(getRegisteredCards());
+  // Fetch cards from API
+  const refreshCards = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/cards');
+      const data = await res.json();
+      if (data.cards) {
+        setRegisteredCards(data.cards);
+      }
+    } catch (error) {
+      console.error('Error fetching cards:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const refreshCards = () => {
-    setRegisteredCards(getRegisteredCards());
-  };
+  // Load cards on mount
+  useEffect(() => {
+    refreshCards();
+  }, [refreshCards]);
 
   const handleNumberClick = (num: number) => {
     if (!gameActive) return;
@@ -71,20 +92,50 @@ export default function AdminPanel() {
     setCurrentNumber(randomNum);
   };
 
-  const handleStartGame = () => {
-    setGameActive(true);
-    setCalledNumbers([]);
-    setCurrentNumber(null);
+  const handleStartGame = async () => {
+    try {
+      const res = await fetch('/api/games', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: gameName, mode: gameMode }),
+      });
+      const data = await res.json();
+      if (data.gameId) {
+        setGameId(data.gameId);
+        setGameActive(true);
+        setCalledNumbers([]);
+        setCurrentNumber(null);
+      }
+    } catch (error) {
+      console.error('Error starting game:', error);
+      // Fallback to local mode
+      setGameActive(true);
+      setCalledNumbers([]);
+      setCurrentNumber(null);
+    }
   };
 
-  const handleEndGame = () => {
+  const handleEndGame = async () => {
+    if (gameId) {
+      try {
+        await fetch(`/api/games/${gameId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'end' }),
+        });
+      } catch (error) {
+        console.error('Error ending game:', error);
+      }
+    }
     setGameActive(false);
+    setGameId(null);
   };
 
   const handleReset = () => {
     setCalledNumbers([]);
     setCurrentNumber(null);
     setGameActive(false);
+    setGameId(null);
   };
 
   const handleUndo = () => {
@@ -94,16 +145,41 @@ export default function AdminPanel() {
     setCurrentNumber(newCalled[newCalled.length - 1] || null);
   };
 
-  const handleVerifyBingo = () => {
+  const handleVerifyBingo = async () => {
     if (!verifyCardId.trim()) return;
-    const result = verifyBingo(verifyCardId.trim(), calledNumbers, winPattern);
-    setVerifyResult(result);
+
+    try {
+      const res = await fetch(
+        `/api/cards/${verifyCardId.trim()}?calledNumbers=${JSON.stringify(calledNumbers)}&pattern=${winPattern}`
+      );
+
+      if (!res.ok) {
+        setVerifyResult({ found: false, hasBingo: false, markedNumbers: [] });
+        return;
+      }
+
+      const data = await res.json();
+
+      setVerifyResult({
+        found: true,
+        card: data.card,
+        hasBingo: data.verification.hasBingo,
+        markedNumbers: data.verification.markedNumbers,
+      });
+    } catch (error) {
+      console.error('Error verifying bingo:', error);
+      setVerifyResult({ found: false, hasBingo: false, markedNumbers: [] });
+    }
   };
 
-  const handleClearRegistry = () => {
+  const handleClearRegistry = async () => {
     if (confirm('¿Seguro que quieres borrar todos los cartones registrados?')) {
-      clearRegistry();
-      refreshCards();
+      try {
+        await fetch('/api/cards', { method: 'DELETE' });
+        refreshCards();
+      } catch (error) {
+        console.error('Error clearing registry:', error);
+      }
     }
   };
 
@@ -313,21 +389,21 @@ export default function AdminPanel() {
                   )}
                 </div>
                 <div className="card-info">
-                  <p><strong>ID:</strong> {verifyResult.card?.card.id}</p>
+                  <p><strong>ID:</strong> {verifyResult.card?.id}</p>
                   <p><strong>Dueño:</strong> {verifyResult.card?.owner.slice(0, 10)}...</p>
-                  <p><strong>Números marcados:</strong> {verifyResult.markedNumbers.length} de {verifyResult.card?.card.numbers.flat().filter(n => n !== null).length}</p>
+                  <p><strong>Números marcados:</strong> {verifyResult.markedNumbers.length} de {verifyResult.card?.numbers.flat().filter(n => n !== null).length}</p>
                 </div>
                 {/* Mostrar el cartón */}
                 <div className="card-preview">
-                  <div className="preview-title">{verifyResult.card?.gameTitle}</div>
-                  {verifyResult.card?.gameMode === '1-75' && (
+                  <div className="preview-title">{verifyResult.card?.game_title}</div>
+                  {verifyResult.card?.game_mode === '1-75' && (
                     <div className="preview-header">
                       {['B', 'I', 'N', 'G', 'O'].map(letter => (
                         <div key={letter} className="preview-cell header">{letter}</div>
                       ))}
                     </div>
                   )}
-                  {verifyResult.card?.card.numbers.map((row, rowIdx) => (
+                  {verifyResult.card?.numbers.map((row, rowIdx) => (
                     <div key={rowIdx} className="preview-row">
                       {row.map((num, colIdx) => {
                         const isCalled = num !== null && calledNumbers.includes(num as number);
@@ -385,18 +461,17 @@ export default function AdminPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {registeredCards.map((entry) => (
-                    <tr key={entry.card.id}>
-                      <td className="card-id-cell">{entry.card.id.slice(0, 8)}</td>
-                      <td>{entry.owner.slice(0, 10)}...</td>
-                      <td>{entry.gameMode}</td>
-                      <td>{new Date(entry.purchasedAt).toLocaleDateString()}</td>
+                  {registeredCards.map((card) => (
+                    <tr key={card.id}>
+                      <td className="card-id-cell">{card.id.slice(0, 8)}</td>
+                      <td>{card.owner.slice(0, 10)}...</td>
+                      <td>{card.game_mode}</td>
+                      <td>{new Date(card.purchased_at).toLocaleDateString()}</td>
                       <td>
                         <button
                           className="btn-check"
                           onClick={() => {
-                            setVerifyCardId(entry.card.id.slice(0, 8));
-                            handleVerifyBingo();
+                            setVerifyCardId(card.id.slice(0, 8));
                           }}
                         >
                           Verificar

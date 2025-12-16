@@ -12,6 +12,8 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.12",
+    "@types/better-sqlite3": "^7.6.13",
+    "better-sqlite3": "^12.5.0",
     "connectkit": "^1.9.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^3.0.4",
