@@ -70,13 +70,27 @@ export interface X402Response {
   body: PaymentDetails;
 }
 
+// Get USDC address based on network
+function getUSDCAddress(network: string): string {
+  switch (network) {
+    case 'base':
+      return USDC_ADDRESSES.base;
+    case 'base-sepolia':
+      return USDC_ADDRESSES.baseSepolia;
+    default:
+      return USDC_ADDRESSES.baseSepolia;
+  }
+}
+
+const network = process.env.NEXT_PUBLIC_PAYMENT_NETWORK || 'base-sepolia';
+
 // Default configuration for the Bingo game payments
 export const PAYMENT_CONFIG = {
   recipient: process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000',
-  network: process.env.NEXT_PUBLIC_PAYMENT_NETWORK || 'base-sepolia',
+  network,
   currency: 'USDC',
-  asset: USDC_ADDRESSES.baseSepolia,
-  entryFee: '0.01', // Entry fee: $0.01 USDC (testing)
+  asset: getUSDCAddress(network),
+  entryFee: '1.00', // Entry fee: $1.00 USDC
   prizePoolPercentage: 90,
   facilitator: FACILITATOR_URL,
   decimals: 6,
@@ -122,11 +136,12 @@ export function createPaymentRequired(amount: string, description: string): X402
 
 // Build payment requirements for facilitator
 export function buildPaymentRequirements(): X402PaymentRequirements {
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ultrabingo402.vercel.app';
   return {
     scheme: 'exact',
     network: PAYMENT_CONFIG.network,
     maxAmountRequired: parseUnits(PAYMENT_CONFIG.entryFee, 6).toString(),
-    resource: 'https://ultrabingo.app/api/pay-entry',
+    resource: `${baseUrl}/api/pay-entry`,
     description: 'UltraBingo game entry fee',
     mimeType: 'application/json',
     payTo: PAYMENT_CONFIG.recipient,
