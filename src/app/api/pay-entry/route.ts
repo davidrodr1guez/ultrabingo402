@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
 
     // Create payment record in DB
     const cardIds = cards?.map((c: any) => c.id) || [];
-    const paymentId = createPayment({
+    const paymentId = await createPayment({
       cardIds,
       walletAddress: authorization.from,
       amount: authorization.value,
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
         // Save cards to database
         if (cards && Array.isArray(cards)) {
           for (const card of cards) {
-            insertCard({
+            await insertCard({
               id: card.id,
               numbers: card.numbers,
               owner: authorization.from,
@@ -154,12 +154,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Update payment status in DB
-    confirmPayment(paymentId, settlement.transaction || '');
+    await confirmPayment(paymentId, settlement.transaction || '');
 
     // Save cards to database with confirmed payment
     if (cards && Array.isArray(cards)) {
       for (const card of cards) {
-        insertCard({
+        await insertCard({
           id: card.id,
           numbers: card.numbers,
           owner: authorization.from,

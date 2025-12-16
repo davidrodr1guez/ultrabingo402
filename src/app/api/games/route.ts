@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createGame, getActiveGame, gameOps, DbGame } from '@/lib/db';
+import { createGame, getActiveGame, getAllGames } from '@/lib/db';
 
 // GET - Get active game or all games
 export async function GET(request: NextRequest) {
@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
     const active = searchParams.get('active');
 
     if (active === 'true') {
-      const game = getActiveGame();
+      const game = await getActiveGame();
       if (!game) {
         return NextResponse.json({ game: null, message: 'No active game' });
       }
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const games = gameOps.getAll.all() as DbGame[];
+    const games = await getAllGames();
     const parsedGames = games.map(game => ({
       ...game,
       called_numbers: JSON.parse(game.called_numbers),
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const { name = 'Partida', mode = '1-75' } = body;
 
     // Check if there's already an active game
-    const activeGame = getActiveGame();
+    const activeGame = await getActiveGame();
     if (activeGame) {
       return NextResponse.json(
         { error: 'There is already an active game. End it first.' },
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const gameId = createGame(name, mode);
+    const gameId = await createGame(name, mode);
 
     return NextResponse.json({
       success: true,

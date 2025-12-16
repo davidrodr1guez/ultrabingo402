@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { gameOps, updateGameNumbers, endGame, DbGame } from '@/lib/db';
+import { getGameById, updateGameNumbers, endGame, deleteGame } from '@/lib/db';
 
 // GET - Get game by ID
 export async function GET(
@@ -9,7 +9,7 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const game = gameOps.getById.get(id) as DbGame | undefined;
+    const game = await getGameById(id);
 
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
@@ -37,7 +37,7 @@ export async function PATCH(
     const body = await request.json();
     const { action, number, calledNumbers } = body;
 
-    const game = gameOps.getById.get(id) as DbGame | undefined;
+    const game = await getGameById(id);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
@@ -60,7 +60,7 @@ export async function PATCH(
       }
 
       currentNumbers.push(number);
-      updateGameNumbers(id, currentNumbers, number);
+      await updateGameNumbers(id, currentNumbers, number);
 
       return NextResponse.json({
         success: true,
@@ -79,7 +79,7 @@ export async function PATCH(
 
       currentNumbers.pop();
       const newCurrent = currentNumbers[currentNumbers.length - 1] || null;
-      updateGameNumbers(id, currentNumbers, newCurrent);
+      await updateGameNumbers(id, currentNumbers, newCurrent);
 
       return NextResponse.json({
         success: true,
@@ -95,7 +95,7 @@ export async function PATCH(
       }
 
       const currentNumber = calledNumbers[calledNumbers.length - 1] || null;
-      updateGameNumbers(id, calledNumbers, currentNumber);
+      await updateGameNumbers(id, calledNumbers, currentNumber);
 
       return NextResponse.json({
         success: true,
@@ -105,7 +105,7 @@ export async function PATCH(
     }
 
     if (action === 'end') {
-      endGame(id);
+      await endGame(id);
       return NextResponse.json({
         success: true,
         message: 'Game ended'
@@ -127,12 +127,12 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const game = gameOps.getById.get(id) as DbGame | undefined;
+    const game = await getGameById(id);
     if (!game) {
       return NextResponse.json({ error: 'Game not found' }, { status: 404 });
     }
 
-    gameOps.delete.run(id);
+    await deleteGame(id);
 
     return NextResponse.json({
       success: true,

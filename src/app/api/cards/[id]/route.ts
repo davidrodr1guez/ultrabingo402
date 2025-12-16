@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCardById, cardOps, updateCardPayment } from '@/lib/db';
+import { getCardById, updateCardPayment, deleteCard } from '@/lib/db';
 import { checkWin, WinPattern } from '@/lib/bingo';
 
 // GET - Get card by ID and optionally verify bingo
@@ -13,7 +13,7 @@ export async function GET(
     const calledNumbersParam = searchParams.get('calledNumbers');
     const pattern = (searchParams.get('pattern') || 'line') as WinPattern;
 
-    const card = getCardById(id);
+    const card = await getCardById(id);
 
     if (!card) {
       return NextResponse.json({ error: 'Card not found' }, { status: 404 });
@@ -79,12 +79,12 @@ export async function PATCH(
     const body = await request.json();
     const { paymentStatus, txHash } = body;
 
-    const card = getCardById(id);
+    const card = await getCardById(id);
     if (!card) {
       return NextResponse.json({ error: 'Card not found' }, { status: 404 });
     }
 
-    updateCardPayment(id, paymentStatus, txHash);
+    await updateCardPayment(id, paymentStatus, txHash);
 
     return NextResponse.json({
       success: true,
@@ -104,12 +104,12 @@ export async function DELETE(
   try {
     const { id } = await params;
 
-    const card = getCardById(id);
+    const card = await getCardById(id);
     if (!card) {
       return NextResponse.json({ error: 'Card not found' }, { status: 404 });
     }
 
-    cardOps.delete.run(id);
+    await deleteCard(id);
 
     return NextResponse.json({
       success: true,

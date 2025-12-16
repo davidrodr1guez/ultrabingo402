@@ -111,7 +111,7 @@ export function useX402Payment() {
 
       const value = parseUnits(amount, 6);
       const nonce = generateNonce();
-      const validAfter = 0n;
+      const validAfter = BigInt(0);
       const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour validity
 
       // Sign EIP-712 typed data for TransferWithAuthorization

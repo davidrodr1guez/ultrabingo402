@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { insertCard, getAllCards, getCardsByOwner, cardOps } from '@/lib/db';
+import { insertCard, getAllCards, getCardsByOwner, deleteAllCards } from '@/lib/db';
 import { generateBingoCard, GameMode } from '@/lib/bingo';
 
 // GET - Get all cards or by owner
@@ -10,9 +10,9 @@ export async function GET(request: NextRequest) {
 
     let cards;
     if (owner) {
-      cards = getCardsByOwner(owner);
+      cards = await getCardsByOwner(owner);
     } else {
-      cards = getAllCards();
+      cards = await getAllCards();
     }
 
     // Parse the numbers JSON
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     if (cards && Array.isArray(cards)) {
       // Save pre-generated cards
       for (const card of cards) {
-        insertCard({
+        await insertCard({
           id: card.id,
           numbers: card.numbers,
           owner,
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
       // Generate new cards
       for (let i = 0; i < count; i++) {
         const card = generateBingoCard(gameMode as GameMode, gameTitle);
-        insertCard({
+        await insertCard({
           id: card.id,
           numbers: card.numbers as number[][],
           owner,
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
 // DELETE - Delete all cards (admin only)
 export async function DELETE(request: NextRequest) {
   try {
-    cardOps.deleteAll.run();
+    await deleteAllCards();
     return NextResponse.json({ success: true, message: 'All cards deleted' });
   } catch (error) {
     console.error('Error deleting cards:', error);
