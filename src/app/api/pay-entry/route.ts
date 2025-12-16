@@ -100,41 +100,6 @@ export async function POST(request: NextRequest) {
 
     if (!verification.isValid) {
       console.log('Verification failed:', verification.invalidReason);
-
-      // Demo mode: Accept signed payment without facilitator verification
-      if (process.env.NODE_ENV === 'development' || process.env.DEMO_MODE === 'true') {
-        console.log('Demo mode: Accepting payment without facilitator verification');
-
-        // Save cards to database
-        if (cards && Array.isArray(cards)) {
-          for (const card of cards) {
-            await insertCard({
-              id: card.id,
-              numbers: card.numbers,
-              owner: authorization.from,
-              gameMode: body.gameMode || '1-75',
-              gameTitle: body.gameTitle || 'UltraBingo',
-              paymentStatus: 'demo',
-            });
-          }
-        }
-
-        return NextResponse.json({
-          success: true,
-          message: 'Payment accepted (demo mode)',
-          gameToken: crypto.randomUUID(),
-          demoMode: true,
-          paymentId,
-          cardIds,
-          payment: {
-            from: authorization.from,
-            to: authorization.to,
-            value: authorization.value,
-            network: paymentPayload.network,
-          },
-        });
-      }
-
       return NextResponse.json(
         { error: 'Payment verification failed', details: verification.invalidReason },
         { status: 400 }
