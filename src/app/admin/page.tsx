@@ -2,7 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { getBingoLetter, GameMode } from '@/lib/bingo';
+import { getBingoLetter, GameMode, WinPattern } from '@/lib/bingo';
+import {
+  getRegisteredCards,
+  verifyBingo,
+  RegisteredCard,
+  clearRegistry
+} from '@/lib/cardRegistry';
 
 export default function AdminPanel() {
   const [gameMode, setGameMode] = useState<GameMode>('1-75');
@@ -11,7 +17,30 @@ export default function AdminPanel() {
   const [gameActive, setGameActive] = useState(false);
   const [gameName, setGameName] = useState('Partida 1');
 
+  // Verificador de bingo
+  const [verifyCardId, setVerifyCardId] = useState('');
+  const [verifyResult, setVerifyResult] = useState<{
+    found: boolean;
+    card?: RegisteredCard;
+    hasBingo: boolean;
+    markedNumbers: number[];
+  } | null>(null);
+  const [winPattern, setWinPattern] = useState<WinPattern>('line');
+
+  // Lista de cartones registrados
+  const [registeredCards, setRegisteredCards] = useState<RegisteredCard[]>([]);
+  const [showCardsList, setShowCardsList] = useState(false);
+
   const maxNumber = gameMode === '1-75' ? 75 : 90;
+
+  // Cargar cartones registrados
+  useEffect(() => {
+    setRegisteredCards(getRegisteredCards());
+  }, []);
+
+  const refreshCards = () => {
+    setRegisteredCards(getRegisteredCards());
+  };
 
   const handleNumberClick = (num: number) => {
     if (!gameActive) return;
@@ -63,6 +92,19 @@ export default function AdminPanel() {
     const newCalled = calledNumbers.slice(0, -1);
     setCalledNumbers(newCalled);
     setCurrentNumber(newCalled[newCalled.length - 1] || null);
+  };
+
+  const handleVerifyBingo = () => {
+    if (!verifyCardId.trim()) return;
+    const result = verifyBingo(verifyCardId.trim(), calledNumbers, winPattern);
+    setVerifyResult(result);
+  };
+
+  const handleClearRegistry = () => {
+    if (confirm('¿Seguro que quieres borrar todos los cartones registrados?')) {
+      clearRegistry();
+      refreshCards();
+    }
   };
 
   return (
@@ -229,6 +271,144 @@ export default function AdminPanel() {
             </span>
           ))}
         </div>
+      </div>
+
+      {/* Verificador de Bingo */}
+      <div className="verify-section">
+        <h3>Verificar Bingo</h3>
+        <div className="verify-form">
+          <input
+            type="text"
+            value={verifyCardId}
+            onChange={(e) => setVerifyCardId(e.target.value)}
+            placeholder="ID del cartón (ej: a1b2c3d4)"
+            className="verify-input"
+          />
+          <select
+            value={winPattern}
+            onChange={(e) => setWinPattern(e.target.value as WinPattern)}
+            className="pattern-select"
+          >
+            <option value="line">Línea</option>
+            <option value="full-house">Cartón lleno</option>
+            <option value="four-corners">4 Esquinas</option>
+            <option value="x-pattern">Patrón X</option>
+          </select>
+          <button className="btn-verify" onClick={handleVerifyBingo}>
+            Verificar
+          </button>
+        </div>
+
+        {verifyResult && (
+          <div className={`verify-result ${verifyResult.found ? (verifyResult.hasBingo ? 'bingo' : 'no-bingo') : 'not-found'}`}>
+            {!verifyResult.found ? (
+              <p>Cartón no encontrado</p>
+            ) : (
+              <>
+                <div className="result-header">
+                  {verifyResult.hasBingo ? (
+                    <span className="bingo-yes">¡BINGO VÁLIDO!</span>
+                  ) : (
+                    <span className="bingo-no">NO tiene bingo</span>
+                  )}
+                </div>
+                <div className="card-info">
+                  <p><strong>ID:</strong> {verifyResult.card?.card.id}</p>
+                  <p><strong>Dueño:</strong> {verifyResult.card?.owner.slice(0, 10)}...</p>
+                  <p><strong>Números marcados:</strong> {verifyResult.markedNumbers.length} de {verifyResult.card?.card.numbers.flat().filter(n => n !== null).length}</p>
+                </div>
+                {/* Mostrar el cartón */}
+                <div className="card-preview">
+                  <div className="preview-title">{verifyResult.card?.gameTitle}</div>
+                  {verifyResult.card?.gameMode === '1-75' && (
+                    <div className="preview-header">
+                      {['B', 'I', 'N', 'G', 'O'].map(letter => (
+                        <div key={letter} className="preview-cell header">{letter}</div>
+                      ))}
+                    </div>
+                  )}
+                  {verifyResult.card?.card.numbers.map((row, rowIdx) => (
+                    <div key={rowIdx} className="preview-row">
+                      {row.map((num, colIdx) => {
+                        const isCalled = num !== null && calledNumbers.includes(num as number);
+                        const isFree = num === null;
+                        return (
+                          <div
+                            key={colIdx}
+                            className={`preview-cell ${isCalled ? 'called' : ''} ${isFree ? 'free' : ''}`}
+                          >
+                            {isFree ? '★' : num}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Lista de Cartones Registrados */}
+      <div className="cards-registry">
+        <div className="registry-header">
+          <h3>Cartones Registrados ({registeredCards.length})</h3>
+          <div className="registry-actions">
+            <button className="btn-refresh" onClick={refreshCards}>
+              Actualizar
+            </button>
+            <button className="btn-toggle" onClick={() => setShowCardsList(!showCardsList)}>
+              {showCardsList ? 'Ocultar' : 'Mostrar'}
+            </button>
+            {registeredCards.length > 0 && (
+              <button className="btn-clear" onClick={handleClearRegistry}>
+                Limpiar todo
+              </button>
+            )}
+          </div>
+        </div>
+
+        {showCardsList && (
+          <div className="cards-list">
+            {registeredCards.length === 0 ? (
+              <p className="no-cards">No hay cartones registrados</p>
+            ) : (
+              <table className="cards-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Dueño</th>
+                    <th>Modo</th>
+                    <th>Fecha</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {registeredCards.map((entry) => (
+                    <tr key={entry.card.id}>
+                      <td className="card-id-cell">{entry.card.id.slice(0, 8)}</td>
+                      <td>{entry.owner.slice(0, 10)}...</td>
+                      <td>{entry.gameMode}</td>
+                      <td>{new Date(entry.purchasedAt).toLocaleDateString()}</td>
+                      <td>
+                        <button
+                          className="btn-check"
+                          onClick={() => {
+                            setVerifyCardId(entry.card.id.slice(0, 8));
+                            handleVerifyBingo();
+                          }}
+                        >
+                          Verificar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
 
       <style jsx>{`
@@ -602,6 +782,271 @@ export default function AdminPanel() {
           padding: 5px 12px;
           border-radius: 15px;
           font-size: 0.85rem;
+        }
+
+        /* Verificador de Bingo */
+        .verify-section {
+          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          padding: 20px;
+          border-radius: 16px;
+          border: 2px solid #00b894;
+          margin-top: 20px;
+        }
+
+        .verify-section h3 {
+          color: #00b894;
+          margin-bottom: 15px;
+        }
+
+        .verify-form {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-bottom: 15px;
+        }
+
+        .verify-input {
+          flex: 1;
+          min-width: 200px;
+          padding: 12px 15px;
+          border: 2px solid #0f3460;
+          border-radius: 8px;
+          background: #0a0a1a;
+          color: #fff;
+          font-size: 1rem;
+        }
+
+        .verify-input:focus {
+          outline: none;
+          border-color: #00b894;
+        }
+
+        .pattern-select {
+          padding: 12px 15px;
+          border: 2px solid #0f3460;
+          border-radius: 8px;
+          background: #0a0a1a;
+          color: #fff;
+          font-size: 1rem;
+          cursor: pointer;
+        }
+
+        .btn-verify {
+          padding: 12px 30px;
+          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+          color: white;
+          border: none;
+          border-radius: 8px;
+          font-weight: bold;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-verify:hover {
+          transform: scale(1.05);
+        }
+
+        .verify-result {
+          padding: 20px;
+          border-radius: 12px;
+          margin-top: 15px;
+        }
+
+        .verify-result.not-found {
+          background: rgba(233, 69, 96, 0.2);
+          border: 2px solid #e94560;
+          color: #e94560;
+        }
+
+        .verify-result.bingo {
+          background: rgba(0, 184, 148, 0.2);
+          border: 2px solid #00b894;
+        }
+
+        .verify-result.no-bingo {
+          background: rgba(243, 156, 18, 0.2);
+          border: 2px solid #f39c12;
+        }
+
+        .result-header {
+          text-align: center;
+          margin-bottom: 15px;
+        }
+
+        .bingo-yes {
+          font-size: 1.5rem;
+          font-weight: bold;
+          color: #00b894;
+        }
+
+        .bingo-no {
+          font-size: 1.5rem;
+          font-weight: bold;
+          color: #f39c12;
+        }
+
+        .card-info {
+          margin-bottom: 15px;
+          color: #aaa;
+        }
+
+        .card-info p {
+          margin: 5px 0;
+        }
+
+        .card-preview {
+          display: inline-block;
+          background: #0a0a1a;
+          padding: 15px;
+          border-radius: 12px;
+        }
+
+        .preview-title {
+          text-align: center;
+          font-weight: bold;
+          color: #e94560;
+          margin-bottom: 10px;
+        }
+
+        .preview-header, .preview-row {
+          display: flex;
+          gap: 3px;
+        }
+
+        .preview-cell {
+          width: 40px;
+          height: 40px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #0f3460;
+          color: #666;
+          border-radius: 4px;
+          font-weight: bold;
+          font-size: 0.9rem;
+        }
+
+        .preview-cell.header {
+          background: #e94560;
+          color: white;
+        }
+
+        .preview-cell.called {
+          background: #00b894;
+          color: white;
+        }
+
+        .preview-cell.free {
+          background: #f39c12;
+          color: #1a1a2e;
+        }
+
+        /* Lista de cartones registrados */
+        .cards-registry {
+          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          padding: 20px;
+          border-radius: 16px;
+          border: 2px solid #0f3460;
+          margin-top: 20px;
+        }
+
+        .registry-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+
+        .registry-header h3 {
+          color: #e94560;
+          margin: 0;
+        }
+
+        .registry-actions {
+          display: flex;
+          gap: 10px;
+        }
+
+        .btn-refresh, .btn-toggle {
+          padding: 8px 15px;
+          background: #0f3460;
+          color: #aaa;
+          border: 2px solid #1a4a7a;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-refresh:hover, .btn-toggle:hover {
+          background: #1a4a7a;
+          color: #fff;
+        }
+
+        .btn-clear {
+          padding: 8px 15px;
+          background: transparent;
+          color: #e94560;
+          border: 2px solid #e94560;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-clear:hover {
+          background: #e94560;
+          color: #fff;
+        }
+
+        .cards-list {
+          margin-top: 15px;
+        }
+
+        .no-cards {
+          color: #666;
+          text-align: center;
+          padding: 20px;
+        }
+
+        .cards-table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+
+        .cards-table th, .cards-table td {
+          padding: 12px;
+          text-align: left;
+          border-bottom: 1px solid #0f3460;
+        }
+
+        .cards-table th {
+          color: #888;
+          font-weight: normal;
+          font-size: 0.9rem;
+        }
+
+        .cards-table td {
+          color: #aaa;
+        }
+
+        .card-id-cell {
+          font-family: monospace;
+          color: #00b894 !important;
+        }
+
+        .btn-check {
+          padding: 6px 12px;
+          background: #0f3460;
+          color: #aaa;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+
+        .btn-check:hover {
+          background: #00b894;
+          color: #fff;
         }
 
         @media (max-width: 768px) {

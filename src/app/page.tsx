@@ -10,6 +10,7 @@ import {
   BingoCard as BingoCardType,
   GameMode,
 } from '@/lib/bingo';
+import { registerCards } from '@/lib/cardRegistry';
 
 export default function Home() {
   const { isConnected, address } = useAccount();
@@ -69,10 +70,14 @@ export default function Home() {
 
         // Simulate successful payment for demo
         await new Promise(resolve => setTimeout(resolve, 1500));
+        // Register cards after payment
+        registerCards(cards, address || 'anonymous', gameMode, gameTitle);
         setIsPaid(true);
       } else if (response.ok) {
         const data = await response.json();
         if (data.success) {
+          // Register cards after payment
+          registerCards(cards, address || 'anonymous', gameMode, gameTitle);
           setIsPaid(true);
         }
       } else {
