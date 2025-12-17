@@ -15,7 +15,7 @@ import { useX402Payment } from '@/hooks/useX402Payment';
 
 // Payment recipient address
 const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x97a3935fBF2d4ac9437dc10e62722D1549C8C43A';
-const PRICE_PER_CARD = 1.00; // $1.00 USDC per card
+const PRICE_PER_CARD = 0.01; // $0.01 USDC per card (testing)
 
 export default function Home() {
   const { isConnected, address } = useAccount();
@@ -243,7 +243,7 @@ export default function Home() {
             <p className="price">
               Total: <span>${totalPrice.toFixed(2)} USDC</span>
             </p>
-            <p className="price-detail">{cards.length} carton{cards.length > 1 ? 'es' : ''} × $1.00 USDC</p>
+            <p className="price-detail">{cards.length} carton{cards.length > 1 ? 'es' : ''} × $0.01 USDC</p>
           </div>
 
           {!isConnected ? (

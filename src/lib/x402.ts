@@ -90,7 +90,7 @@ export const PAYMENT_CONFIG = {
   network,
   currency: 'USDC',
   asset: getUSDCAddress(network),
-  entryFee: '1.00', // Entry fee: $1.00 USDC
+  entryFee: '0.01', // Entry fee: $0.01 USDC (testing)
   prizePoolPercentage: 90,
   facilitator: FACILITATOR_URL,
   decimals: 6,
