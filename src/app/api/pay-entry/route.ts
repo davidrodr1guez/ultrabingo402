@@ -101,6 +101,85 @@ export async function POST(request: NextRequest) {
       maxAmountRequired: authorization.value, // Use the actual signed amount
     };
 
+    // DIRECT PAYMENT MODE: Accept signed authorization without external facilitator
+    // User signed an EIP-712 message - we trust the signature
+    const isDirectPayment = process.env.NEXT_PUBLIC_DIRECT_PAYMENT === 'true' || process.env.DIRECT_PAYMENT === 'true';
+
+    if (isDirectPayment) {
+      console.log('💳 DIRECT PAYMENT: Accepting signed authorization');
+      console.log('   From:', authorization.from);
+      console.log('   To:', authorization.to);
+      console.log('   Value:', authorization.value);
+
+      // Save cards to database with payment info
+      if (cards && Array.isArray(cards)) {
+        for (const card of cards) {
+          await insertCard({
+            id: card.id,
+            numbers: card.numbers,
+            owner: walletAddress || authorization.from,
+            gameMode: body.gameMode || '1-75',
+            gameTitle: body.gameTitle || 'UltraBingo',
+            txHash: `signed-${paymentPayload.payload.signature.slice(0, 20)}`,
+            paymentStatus: 'confirmed',
+          });
+        }
+      }
+
+      await confirmPayment(paymentId, `direct-${Date.now()}`);
+
+      return NextResponse.json({
+        success: true,
+        message: '💳 Payment signature accepted!',
+        gameToken: crypto.randomUUID(),
+        transaction: `direct-${paymentPayload.payload.signature.slice(0, 16)}`,
+        network: paymentPayload.network,
+        paymentId,
+        cardIds,
+        direct: true,
+        payment: {
+          from: authorization.from,
+          to: authorization.to,
+          value: authorization.value,
+        },
+      });
+    }
+
+    // DEMO MODE: Skip verification for local testing
+    const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || process.env.DEMO_MODE === 'true';
+
+    if (isDemoMode) {
+      console.log('🎮 DEMO MODE: Skipping payment verification');
+
+      // Save cards to database with demo payment
+      if (cards && Array.isArray(cards)) {
+        for (const card of cards) {
+          await insertCard({
+            id: card.id,
+            numbers: card.numbers,
+            owner: walletAddress || authorization.from,
+            gameMode: body.gameMode || '1-75',
+            gameTitle: body.gameTitle || 'UltraBingo',
+            txHash: 'demo-' + Date.now(),
+            paymentStatus: 'confirmed',
+          });
+        }
+      }
+
+      await confirmPayment(paymentId, 'demo-' + Date.now());
+
+      return NextResponse.json({
+        success: true,
+        message: '🎮 DEMO: Payment simulated!',
+        gameToken: crypto.randomUUID(),
+        transaction: 'demo-tx-' + Date.now(),
+        network: 'demo',
+        paymentId,
+        cardIds,
+        demo: true,
+      });
+    }
+
     // Step 1: Verify payment with facilitator
     console.log('Verifying payment with facilitator...');
     console.log('Payment requirements:', JSON.stringify(paymentRequirements, null, 2));

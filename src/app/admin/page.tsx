@@ -63,20 +63,45 @@ export default function AdminPanel() {
     refreshCards();
   }, [refreshCards]);
 
+  // Sync state with server
+  const syncGameState = async (newCalled: number[], newCurrent: number | null) => {
+    if (!gameId) return;
+
+    try {
+      await fetch(`/api/games/${gameId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync',
+          calledNumbers: newCalled
+        }),
+      });
+    } catch (error) {
+      console.error('Error syncing game state:', error);
+    }
+  };
+
   const handleNumberClick = (num: number) => {
     if (!gameActive) return;
 
+    let newCalled: number[];
+    let newCurrent: number | null;
+
     if (calledNumbers.includes(num)) {
       // Quitar número si ya fue llamado
-      setCalledNumbers(prev => prev.filter(n => n !== num));
-      if (currentNumber === num) {
-        setCurrentNumber(calledNumbers[calledNumbers.length - 2] || null);
-      }
+      newCalled = calledNumbers.filter(n => n !== num);
+      newCurrent = currentNumber === num
+        ? (newCalled[newCalled.length - 1] || null)
+        : currentNumber;
     } else {
       // Agregar número
-      setCalledNumbers(prev => [...prev, num]);
-      setCurrentNumber(num);
+      newCalled = [...calledNumbers, num];
+      newCurrent = num;
     }
+
+    setCalledNumbers(newCalled);
+    setCurrentNumber(newCurrent);
+    syncGameState(newCalled, newCurrent);
   };
 
   const handleRandomCall = () => {
@@ -88,8 +113,11 @@ export default function AdminPanel() {
     if (available.length === 0) return;
 
     const randomNum = available[Math.floor(Math.random() * available.length)];
-    setCalledNumbers(prev => [...prev, randomNum]);
+    const newCalled = [...calledNumbers, randomNum];
+
+    setCalledNumbers(newCalled);
     setCurrentNumber(randomNum);
+    syncGameState(newCalled, randomNum);
   };
 
   const handleStartGame = async () => {
@@ -140,9 +168,13 @@ export default function AdminPanel() {
 
   const handleUndo = () => {
     if (calledNumbers.length === 0) return;
+
     const newCalled = calledNumbers.slice(0, -1);
+    const newCurrent = newCalled[newCalled.length - 1] || null;
+
     setCalledNumbers(newCalled);
-    setCurrentNumber(newCalled[newCalled.length - 1] || null);
+    setCurrentNumber(newCurrent);
+    syncGameState(newCalled, newCurrent);
   };
 
   const handleVerifyBingo = async () => {

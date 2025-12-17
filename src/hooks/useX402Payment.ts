@@ -114,9 +114,12 @@ export function useX402Payment() {
       const validAfter = BigInt(0);
       const validBefore = BigInt(Math.floor(Date.now() / 1000) + 3600); // 1 hour validity
 
+      // Get domain for EIP-712
+      const domain = getUSDCDomain(chain.id);
+
       // Sign EIP-712 typed data for TransferWithAuthorization
       const signature = await signTypedDataAsync({
-        domain: getUSDCDomain(chain.id),
+        domain,
         types: TRANSFER_WITH_AUTHORIZATION_TYPES,
         primaryType: 'TransferWithAuthorization',
         message: {
@@ -129,7 +132,7 @@ export function useX402Payment() {
         },
       });
 
-      // Create x402 payment payload
+      // Create x402 payment payload WITH eip712Domain for facilitator
       const payload = {
         x402Version: 1,
         scheme: 'exact',
@@ -143,6 +146,13 @@ export function useX402Payment() {
             validAfter: validAfter.toString(),
             validBefore: validBefore.toString(),
             nonce,
+          },
+          // Include EIP-712 domain for facilitator verification
+          eip712Domain: {
+            name: domain.name,
+            version: domain.version,
+            chainId: domain.chainId,
+            verifyingContract: domain.verifyingContract,
           },
         },
       };
