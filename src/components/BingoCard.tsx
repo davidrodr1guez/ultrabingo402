@@ -1,6 +1,5 @@
-'use client';
-
 import { BingoCard as BingoCardType, GameMode } from '@/lib/bingo';
+import { BINGO_THEMES, BingoTheme, DEFAULT_THEME } from '@/lib/themes';
 
 interface BingoCardProps {
   card: BingoCardType;
@@ -9,6 +8,7 @@ interface BingoCardProps {
   mode?: GameMode;
   calledNumbers?: number[];
   showAutoMark?: boolean;
+  theme?: BingoTheme;
 }
 
 export default function BingoCard({
@@ -18,6 +18,7 @@ export default function BingoCard({
   mode = '1-75',
   calledNumbers = [],
   showAutoMark = true,
+  theme = DEFAULT_THEME,
 }: BingoCardProps) {
   const headers = mode === '1-75' ? ['B', 'I', 'N', 'G', 'O'] : null;
   const is75Mode = mode === '1-75';
@@ -34,8 +35,28 @@ export default function BingoCard({
     return isNumberCalled(num);
   };
 
+  const { colors } = theme;
+
   return (
-    <div className={`bingo-card ${is75Mode ? 'mode-75' : 'mode-90'}`}>
+    <div
+      className={`bingo-card ${is75Mode ? 'mode-75' : 'mode-90'}`}
+      style={{
+        '--card-bg': colors.cardBg,
+        '--header-bg': colors.headerBg,
+        '--header-text': colors.headerText,
+        '--cell-bg': colors.cellBg,
+        '--cell-text': colors.cellText,
+        '--marked-bg': colors.markedBg,
+        '--marked-text': colors.markedText,
+        '--uncalled-bg': colors.uncalledBg,
+        '--uncalled-text': colors.uncalledText,
+        '--callable-bg': colors.callableBg,
+        '--free-bg': colors.freeBg,
+        '--free-text': colors.freeText,
+        '--border-color': colors.border,
+        '--accent-color': colors.accent,
+      } as React.CSSProperties}
+    >
       {card.title && <div className="card-title">{card.title}</div>}
 
       {headers && (
@@ -85,17 +106,17 @@ export default function BingoCard({
           display: flex;
           flex-direction: column;
           gap: 4px;
-          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          background: var(--card-bg);
           padding: 20px;
           border-radius: 16px;
           box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-          border: 2px solid #0f3460;
+          border: 2px solid var(--border-color);
         }
 
         .card-title {
           text-align: center;
           font-weight: bold;
-          color: #eee;
+          color: var(--cell-text);
           margin-bottom: 10px;
           font-size: 1.1rem;
         }
@@ -128,43 +149,42 @@ export default function BingoCard({
         }
 
         .bingo-cell.header {
-          background: linear-gradient(135deg, #e94560 0%, #ff6b6b 100%);
-          color: white;
+          background: var(--header-bg);
+          color: var(--header-text);
           font-size: 1.5rem;
         }
 
         .bingo-cell:not(.header) {
-          background: #0f3460;
-          color: #eee;
+          background: var(--cell-bg);
+          color: var(--cell-text);
           cursor: pointer;
           border: none;
         }
 
         .bingo-cell.uncalled {
-          background: #0a0a1a;
-          color: #555;
+          background: var(--uncalled-bg);
+          color: var(--uncalled-text);
         }
 
         .bingo-cell.callable {
-          background: #1a4a7a;
-          color: #fff;
+          background: var(--callable-bg);
+          color: var(--cell-text);
           animation: glow 1.5s infinite;
           cursor: pointer;
         }
 
         .bingo-cell.callable:hover {
-          background: #2a5a8a;
           transform: scale(1.05);
         }
 
         @keyframes glow {
-          0%, 100% { box-shadow: 0 0 5px #00b894; }
-          50% { box-shadow: 0 0 15px #00b894; }
+          0%, 100% { box-shadow: 0 0 5px var(--accent-color); }
+          50% { box-shadow: 0 0 15px var(--accent-color); }
         }
 
         .bingo-cell.marked {
-          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
-          color: white;
+          background: var(--marked-bg);
+          color: var(--marked-text);
           animation: pop 0.3s ease;
         }
 
@@ -176,8 +196,8 @@ export default function BingoCard({
         }
 
         .bingo-cell.free {
-          background: linear-gradient(135deg, #fdcb6e 0%, #f39c12 100%);
-          color: #1a1a2e;
+          background: var(--free-bg);
+          color: var(--free-text);
           font-size: 0.7rem;
           font-weight: bold;
         }

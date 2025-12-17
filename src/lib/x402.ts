@@ -13,8 +13,8 @@ export const USDC_ADDRESSES = {
   polygon: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
 } as const;
 
-// x402.org Facilitator (supports Base Sepolia)
-export const FACILITATOR_URL = 'https://x402.org/facilitator';
+// Ultravioleta DAO Facilitator (supports Base, Base Sepolia, Avalanche, Polygon)
+export const FACILITATOR_URL = 'https://facilitator.ultravioletadao.xyz';
 
 // x402 Payment Payload interface (EVM)
 export interface X402PaymentPayload {
