@@ -1,22 +1,56 @@
-// x402 Payment Protocol Integration with Ultravioleta DAO Facilitator
-// https://www.x402.org/
-// https://facilitator.ultravioletadao.xyz/
+// x402 Payment Protocol Integration
+// Uses Ultravioleta DAO Facilitator: https://facilitator.ultravioletadao.xyz/
 
-import { createPublicClient, http, parseUnits, formatUnits } from 'viem';
+import { parseUnits } from 'viem';
 import { base, baseSepolia } from 'viem/chains';
+
+// Ultravioleta DAO Facilitator
+export const FACILITATOR_URL = 'https://facilitator.ultravioletadao.xyz';
 
 // USDC contract addresses
 export const USDC_ADDRESSES = {
   base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-  baseSepolia: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-  avalanche: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',
-  polygon: '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359',
+  'base-sepolia': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
 } as const;
 
-// Ultravioleta DAO Facilitator (supports Base, Base Sepolia, Avalanche, Polygon)
-export const FACILITATOR_URL = 'https://facilitator.ultravioletadao.xyz';
+// USDC EIP-712 domain names (different per network)
+export const USDC_DOMAIN_NAMES = {
+  base: 'USD Coin',
+  'base-sepolia': 'USDC',
+} as const;
 
-// x402 Payment Payload interface (EVM)
+// Network type
+export type NetworkType = 'base' | 'base-sepolia';
+
+// Get current network from env
+function getNetwork(): NetworkType {
+  const network = process.env.NEXT_PUBLIC_PAYMENT_NETWORK || 'base-sepolia';
+  return network as NetworkType;
+}
+
+// Payment configuration
+export const PAYMENT_CONFIG = {
+  recipient: process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x97a3935fBF2d4ac9437dc10e62722D1549C8C43A',
+  network: getNetwork(),
+  currency: 'USDC',
+  asset: USDC_ADDRESSES[getNetwork()],
+  entryFee: '0.01', // $0.01 USDC for testing
+  decimals: 6,
+};
+
+// Get chain config
+export function getChainConfig(network: NetworkType) {
+  switch (network) {
+    case 'base':
+      return { chain: base, usdc: USDC_ADDRESSES.base, chainId: 8453, usdcName: USDC_DOMAIN_NAMES.base };
+    case 'base-sepolia':
+      return { chain: baseSepolia, usdc: USDC_ADDRESSES['base-sepolia'], chainId: 84532, usdcName: USDC_DOMAIN_NAMES['base-sepolia'] };
+    default:
+      return { chain: baseSepolia, usdc: USDC_ADDRESSES['base-sepolia'], chainId: 84532, usdcName: USDC_DOMAIN_NAMES['base-sepolia'] };
+  }
+}
+
+// x402 PaymentPayload for EVM exact scheme
 export interface X402PaymentPayload {
   x402Version: number;
   scheme: 'exact';
@@ -34,8 +68,8 @@ export interface X402PaymentPayload {
   };
 }
 
-// x402 Payment Requirements interface
-export interface X402PaymentRequirements {
+// x402 PaymentRequirements (must match x402 spec for facilitator)
+export interface PaymentRequirements {
   scheme: 'exact';
   network: string;
   maxAmountRequired: string;
@@ -45,129 +79,75 @@ export interface X402PaymentRequirements {
   payTo: string;
   maxTimeoutSeconds: number;
   asset: string;
-}
-
-export interface PaymentDetails {
-  amount: string;
-  currency: string;
-  recipient: string;
-  network: string;
-  description: string;
-  facilitator: string;
-  asset: string;
-}
-
-export interface X402Response {
-  status: 402;
-  headers: {
-    'X-Payment-Required': string;
-    'X-Payment-Address': string;
-    'X-Payment-Amount': string;
-    'X-Payment-Network': string;
-    'X-Payment-Asset': string;
-    'X-Facilitator-URL': string;
-  };
-  body: PaymentDetails;
-}
-
-// Get USDC address based on network
-function getUSDCAddress(network: string): string {
-  switch (network) {
-    case 'base':
-      return USDC_ADDRESSES.base;
-    case 'base-sepolia':
-      return USDC_ADDRESSES.baseSepolia;
-    default:
-      return USDC_ADDRESSES.baseSepolia;
-  }
-}
-
-const network = process.env.NEXT_PUBLIC_PAYMENT_NETWORK || 'base-sepolia';
-
-// Default configuration for the Bingo game payments
-export const PAYMENT_CONFIG = {
-  recipient: process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x0000000000000000000000000000000000000000',
-  network,
-  currency: 'USDC',
-  asset: getUSDCAddress(network),
-  entryFee: '0.01', // Entry fee: $0.01 USDC (testing)
-  prizePoolPercentage: 90,
-  facilitator: FACILITATOR_URL,
-  decimals: 6,
-};
-
-// Get the appropriate chain config
-export function getChainConfig(network: string) {
-  switch (network) {
-    case 'base':
-      return { chain: base, usdc: USDC_ADDRESSES.base, networkId: '8453' };
-    case 'base-sepolia':
-      return { chain: baseSepolia, usdc: USDC_ADDRESSES.baseSepolia, networkId: '84532' };
-    default:
-      return { chain: baseSepolia, usdc: USDC_ADDRESSES.baseSepolia, networkId: '84532' };
-  }
-}
-
-// Create x402 payment required response
-export function createPaymentRequired(amount: string, description: string): X402Response {
-  const paymentDetails: PaymentDetails = {
-    amount,
-    currency: PAYMENT_CONFIG.currency,
-    recipient: PAYMENT_CONFIG.recipient,
-    network: PAYMENT_CONFIG.network,
-    description,
-    facilitator: PAYMENT_CONFIG.facilitator,
-    asset: PAYMENT_CONFIG.asset,
-  };
-
-  return {
-    status: 402,
-    headers: {
-      'X-Payment-Required': 'true',
-      'X-Payment-Address': PAYMENT_CONFIG.recipient,
-      'X-Payment-Amount': amount,
-      'X-Payment-Network': PAYMENT_CONFIG.network,
-      'X-Payment-Asset': PAYMENT_CONFIG.asset,
-      'X-Facilitator-URL': PAYMENT_CONFIG.facilitator,
-    },
-    body: paymentDetails,
+  extra?: {
+    name?: string;
+    version?: string;
   };
 }
 
-// Build payment requirements for facilitator
-export function buildPaymentRequirements(): X402PaymentRequirements {
+// Build payment requirements for the facilitator
+export function buildPaymentRequirements(amount?: string): PaymentRequirements {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://ultrabingo402.vercel.app';
+  const totalAmount = amount || PAYMENT_CONFIG.entryFee;
+  const network = PAYMENT_CONFIG.network;
+  const chainConfig = getChainConfig(network);
+
   return {
     scheme: 'exact',
-    network: PAYMENT_CONFIG.network,
-    maxAmountRequired: parseUnits(PAYMENT_CONFIG.entryFee, 6).toString(),
+    network: network,
+    maxAmountRequired: parseUnits(totalAmount, 6).toString(),
     resource: `${baseUrl}/api/pay-entry`,
-    description: 'UltraBingo game entry fee',
+    description: `UltraBingo - $${totalAmount} USDC`,
     mimeType: 'application/json',
     payTo: PAYMENT_CONFIG.recipient,
-    maxTimeoutSeconds: 60,
+    maxTimeoutSeconds: 300,
     asset: PAYMENT_CONFIG.asset,
+    extra: {
+      name: chainConfig.usdcName,
+      version: '2',
+    },
   };
 }
 
-// Verify payment via x402.org facilitator
-export async function verifyPaymentWithFacilitator(
+// Helper to convert BigInt to string for JSON serialization
+function toJsonSafe(data: any): any {
+  if (typeof data !== 'object' || data === null) {
+    return typeof data === 'bigint' ? data.toString() : data;
+  }
+  if (Array.isArray(data)) {
+    return data.map(toJsonSafe);
+  }
+  return Object.fromEntries(
+    Object.entries(data).map(([key, val]) => [key, toJsonSafe(val)])
+  );
+}
+
+// Verify payment via Ultravioleta DAO facilitator
+export async function verifyPayment(
   paymentPayload: X402PaymentPayload,
-  paymentRequirements?: X402PaymentRequirements
-): Promise<{ isValid: boolean; payer?: string; invalidReason?: string }> {
+  paymentRequirements: PaymentRequirements
+): Promise<{ isValid: boolean; invalidReason?: string; payer?: string }> {
   try {
-    const requirements = paymentRequirements || buildPaymentRequirements();
+    console.log('Verifying payment with Ultravioleta facilitator...');
+    console.log('Payload:', JSON.stringify(paymentPayload, null, 2));
+    console.log('Requirements:', JSON.stringify(paymentRequirements, null, 2));
+
+    // x402 facilitator expects this format (from x402/verify useFacilitator):
+    // { x402Version, paymentPayload, paymentRequirements }
+    const verifyRequest = {
+      x402Version: paymentPayload.x402Version,
+      paymentPayload: toJsonSafe(paymentPayload),
+      paymentRequirements: toJsonSafe(paymentRequirements),
+    };
+
+    console.log('Verify request:', JSON.stringify(verifyRequest, null, 2));
 
     const response = await fetch(`${FACILITATOR_URL}/verify`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        x402Version: 1,
-        paymentPayload,
-        paymentRequirements: requirements,
-      }),
+      body: JSON.stringify(verifyRequest),
     });
 
     const result = await response.json();
@@ -177,35 +157,41 @@ export async function verifyPaymentWithFacilitator(
       return { isValid: true, payer: result.payer };
     }
 
-    return { isValid: false, invalidReason: result.invalidReason || result.error || 'Verification failed' };
+    return {
+      isValid: false,
+      invalidReason: result.invalidReason || result.error || 'Verification failed',
+      payer: result.payer,
+    };
   } catch (error) {
-    console.error('Facilitator verification error:', error);
+    console.error('Verify error:', error);
     return { isValid: false, invalidReason: 'Verification request failed' };
   }
 }
 
-// Settle payment via x402.org facilitator (gasless)
-export async function settlePaymentWithFacilitator(
+// Settle payment via Ultravioleta DAO facilitator (gasless on-chain execution)
+export async function settlePayment(
   paymentPayload: X402PaymentPayload,
-  paymentRequirements?: X402PaymentRequirements
-): Promise<{ success: boolean; transaction?: string; network?: string; payer?: string; error?: string }> {
+  paymentRequirements: PaymentRequirements
+): Promise<{ success: boolean; transaction?: string; error?: string; payer?: string; network?: string }> {
   try {
-    const requirements = paymentRequirements || buildPaymentRequirements();
+    console.log('Settling payment with Ultravioleta facilitator...');
 
-    const requestBody = {
-      x402Version: 1,
-      paymentPayload,
-      paymentRequirements: requirements,
+    // x402 facilitator expects this format (from x402/verify useFacilitator):
+    // { x402Version, paymentPayload, paymentRequirements }
+    const settleRequest = {
+      x402Version: paymentPayload.x402Version,
+      paymentPayload: toJsonSafe(paymentPayload),
+      paymentRequirements: toJsonSafe(paymentRequirements),
     };
 
-    console.log('Settle request:', JSON.stringify(requestBody, null, 2));
+    console.log('Settle request:', JSON.stringify(settleRequest, null, 2));
 
     const response = await fetch(`${FACILITATOR_URL}/settle`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(requestBody),
+      body: JSON.stringify(settleRequest),
     });
 
     const result = await response.json();
@@ -214,73 +200,45 @@ export async function settlePaymentWithFacilitator(
     if (response.ok && result.success) {
       return {
         success: true,
-        transaction: result.transaction,
-        network: result.network,
+        transaction: result.transaction || result.txHash,
         payer: result.payer,
+        network: result.network,
       };
     }
 
-    return { success: false, error: result.errorReason || result.error || 'Settlement failed' };
+    return {
+      success: false,
+      error: result.errorReason || result.error || 'Settlement failed',
+      payer: result.payer,
+    };
   } catch (error) {
-    console.error('Facilitator settlement error:', error);
+    console.error('Settle error:', error);
     return { success: false, error: 'Settlement request failed' };
   }
 }
 
-// Verify payment on-chain (fallback)
-export async function verifyPaymentOnChain(
-  txHash: string,
-  expectedAmount: string,
-  expectedRecipient: string
-): Promise<boolean> {
+// Decode x402 payment header (base64 JSON)
+export function decodePaymentHeader(header: string): X402PaymentPayload | null {
   try {
-    const { chain } = getChainConfig(PAYMENT_CONFIG.network);
-    const client = createPublicClient({
-      chain,
-      transport: http(),
-    });
-
-    const receipt = await client.getTransactionReceipt({ hash: txHash as `0x${string}` });
-
-    if (!receipt || receipt.status !== 'success') {
-      return false;
-    }
-
-    return receipt.status === 'success';
-  } catch (error) {
-    console.error('On-chain payment verification error:', error);
-    return false;
+    return JSON.parse(atob(header));
+  } catch (e) {
+    console.error('Failed to decode payment header:', e);
+    return null;
   }
 }
 
-// Calculate prize pool distribution
-export function calculatePrize(totalPool: string, numWinners: number = 1): string {
-  const poolAmount = parseUnits(totalPool, PAYMENT_CONFIG.decimals);
-  const prizeAmount = poolAmount / BigInt(numWinners);
-  return formatUnits(prizeAmount, PAYMENT_CONFIG.decimals);
+// Encode x402 payment header
+export function encodePaymentHeader(payload: X402PaymentPayload): string {
+  return btoa(JSON.stringify(payload));
 }
 
-// Generate payment request for game entry
-export function generateEntryPaymentRequest(): X402Response {
-  return createPaymentRequired(
-    PAYMENT_CONFIG.entryFee,
-    `UltraBingo game entry fee - $${PAYMENT_CONFIG.entryFee} USDC`
-  );
-}
-
-// Generate payment info for prize claim
-export function generatePrizePayment(winnerAddress: string, amount: string) {
-  return {
-    recipient: winnerAddress,
-    amount,
-    currency: PAYMENT_CONFIG.currency,
-    network: PAYMENT_CONFIG.network,
-    asset: PAYMENT_CONFIG.asset,
-    facilitator: PAYMENT_CONFIG.facilitator,
-  };
-}
-
-// Format USDC amount for display
+// Format USDC for display
 export function formatUSDC(amount: string): string {
   return `$${parseFloat(amount).toFixed(2)} USDC`;
+}
+
+// Calculate total price
+export function calculateTotalPrice(cardCount: number): string {
+  const pricePerCard = parseFloat(PAYMENT_CONFIG.entryFee);
+  return (pricePerCard * cardCount).toFixed(2);
 }

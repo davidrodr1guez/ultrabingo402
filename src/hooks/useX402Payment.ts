@@ -2,33 +2,13 @@
 
 import { useAccount, useSignTypedData, usePublicClient } from 'wagmi';
 import { useState, useCallback } from 'react';
-import { parseUnits, encodeFunctionData, keccak256, toHex, concat, pad } from 'viem';
+import { parseUnits } from 'viem';
 import { baseSepolia, base } from 'viem/chains';
 
 // USDC contract addresses
 const USDC_ADDRESSES = {
   [baseSepolia.id]: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
   [base.id]: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-} as const;
-
-// EIP-3009 domain for USDC
-const getUSDCDomain = (chainId: number) => ({
-  name: 'USD Coin',
-  version: '2',
-  chainId,
-  verifyingContract: USDC_ADDRESSES[chainId as keyof typeof USDC_ADDRESSES] as `0x${string}`,
-});
-
-// EIP-3009 TransferWithAuthorization types
-const TRANSFER_WITH_AUTHORIZATION_TYPES = {
-  TransferWithAuthorization: [
-    { name: 'from', type: 'address' },
-    { name: 'to', type: 'address' },
-    { name: 'value', type: 'uint256' },
-    { name: 'validAfter', type: 'uint256' },
-    { name: 'validBefore', type: 'uint256' },
-    { name: 'nonce', type: 'bytes32' },
-  ],
 } as const;
 
 // USDC ABI for balance check
@@ -41,6 +21,30 @@ const USDC_ABI = [
     stateMutability: 'view',
   },
 ] as const;
+
+// EIP-3009 TransferWithAuthorization types for EIP-712 signing
+const TRANSFER_WITH_AUTHORIZATION_TYPES = {
+  TransferWithAuthorization: [
+    { name: 'from', type: 'address' },
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'validAfter', type: 'uint256' },
+    { name: 'validBefore', type: 'uint256' },
+    { name: 'nonce', type: 'bytes32' },
+  ],
+} as const;
+
+// Get USDC EIP-712 domain based on chain
+// Note: Base Sepolia USDC uses "USDC" as domain name, mainnet uses "USD Coin"
+const getUSDCDomain = (chainId: number) => {
+  const isTestnet = chainId === baseSepolia.id;
+  return {
+    name: isTestnet ? 'USDC' : 'USD Coin',
+    version: '2',
+    chainId,
+    verifyingContract: USDC_ADDRESSES[chainId as keyof typeof USDC_ADDRESSES] as `0x${string}`,
+  };
+};
 
 interface PaymentResult {
   success: boolean;
@@ -86,7 +90,7 @@ export function useX402Payment() {
     return `0x${Array.from(randomBytes).map(b => b.toString(16).padStart(2, '0')).join('')}`;
   };
 
-  // Create and sign x402 payment
+  // Create and sign x402 payment using EIP-712
   const createPayment = useCallback(async (
     recipient: string,
     amount: string,
@@ -117,6 +121,17 @@ export function useX402Payment() {
       // Get domain for EIP-712
       const domain = getUSDCDomain(chain.id);
 
+      console.log('Signing EIP-712 TransferWithAuthorization...');
+      console.log('Domain:', domain);
+      console.log('Message:', {
+        from: address,
+        to: recipient,
+        value: value.toString(),
+        validAfter: validAfter.toString(),
+        validBefore: validBefore.toString(),
+        nonce,
+      });
+
       // Sign EIP-712 typed data for TransferWithAuthorization
       const signature = await signTypedDataAsync({
         domain,
@@ -132,11 +147,15 @@ export function useX402Payment() {
         },
       });
 
-      // Create x402 payment payload WITH eip712Domain for facilitator
+      console.log('Signature:', signature);
+
+      // Create x402 v1 payment payload
+      const networkName = chain.id === base.id ? 'base' : 'base-sepolia';
+
       const payload = {
         x402Version: 1,
-        scheme: 'exact',
-        network: chain.id === base.id ? 'base' : 'base-sepolia',
+        scheme: 'exact' as const,
+        network: networkName,
         payload: {
           signature,
           authorization: {
@@ -147,17 +166,13 @@ export function useX402Payment() {
             validBefore: validBefore.toString(),
             nonce,
           },
-          // Include EIP-712 domain for facilitator verification
-          eip712Domain: {
-            name: domain.name,
-            version: domain.version,
-            chainId: domain.chainId,
-            verifyingContract: domain.verifyingContract,
-          },
         },
       };
 
+      // Base64 encode the payload for X-PAYMENT header
       const encodedPayload = btoa(JSON.stringify(payload));
+
+      console.log('Payment payload created:', payload);
 
       return {
         success: true,
@@ -175,35 +190,40 @@ export function useX402Payment() {
     }
   }, [address, isConnected, chain, signTypedDataAsync, checkBalance]);
 
-  // Submit payment to server
+  // Submit payment to server with X-PAYMENT header
   const submitPayment = useCallback(async (
     endpoint: string,
     paymentPayload: string,
+    body: any = {},
   ): Promise<PaymentResult> => {
     try {
+      console.log('Submitting payment to:', endpoint);
+
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Payment': paymentPayload,
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(body),
       });
 
       const data = await response.json();
+      console.log('Server response:', data);
 
-      if (response.ok) {
+      if (response.ok && data.success) {
         return {
           success: true,
-          txHash: data.txHash,
+          txHash: data.transaction,
         };
       }
 
       return {
         success: false,
-        error: data.error || 'Payment submission failed',
+        error: data.error || data.details || 'Payment submission failed',
       };
     } catch (error: any) {
+      console.error('Submit error:', error);
       return {
         success: false,
         error: error.message || 'Network error',
@@ -211,11 +231,12 @@ export function useX402Payment() {
     }
   }, []);
 
-  // Full payment flow
+  // Full payment flow: create + submit
   const pay = useCallback(async (
     recipient: string,
     amount: string,
     endpoint: string = '/api/pay-entry',
+    body: any = {},
   ): Promise<PaymentResult> => {
     // Step 1: Create and sign payment
     const paymentResult = await createPayment(recipient, amount);
@@ -224,7 +245,7 @@ export function useX402Payment() {
     }
 
     // Step 2: Submit to server
-    const submitResult = await submitPayment(endpoint, paymentResult.payload);
+    const submitResult = await submitPayment(endpoint, paymentResult.payload, body);
     return submitResult;
   }, [createPayment, submitPayment]);
 

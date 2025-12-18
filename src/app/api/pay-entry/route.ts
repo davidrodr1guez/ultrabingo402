@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseUnits } from 'viem';
 import {
-  verifyPaymentWithFacilitator,
-  settlePaymentWithFacilitator,
+  verifyPayment,
+  settlePayment,
   PAYMENT_CONFIG,
   FACILITATOR_URL,
   X402PaymentPayload,
   buildPaymentRequirements,
+  decodePaymentHeader,
 } from '@/lib/x402';
-import { insertCard, createPayment, confirmPayment, updateCardPayment } from '@/lib/db';
+import { insertCard, createPayment, confirmPayment } from '@/lib/db';
 
 // Calculate price based on number of cards
 function calculatePrice(cardCount: number): string {
@@ -27,20 +28,14 @@ export async function POST(request: NextRequest) {
     // If no payment header, return 402 Payment Required
     if (!paymentHeader) {
       const totalPrice = calculatePrice(cards?.length || cardCount);
-      const requirements = buildPaymentRequirements();
+      const requirements = buildPaymentRequirements(totalPrice);
 
-      // Update the amount based on card count
-      const totalAmount = parseUnits(totalPrice, 6).toString();
-
+      // x402 spec: response body should have { x402Version, accepts: [PaymentRequirements] }
       return new NextResponse(JSON.stringify({
         x402Version: 1,
-        scheme: 'exact',
-        network: PAYMENT_CONFIG.network,
-        requirements: {
-          ...requirements,
-          maxAmountRequired: totalAmount,
-          description: `UltraBingo - ${cards?.length || cardCount} cartones - $${totalPrice} USDC`,
-        },
+        error: 'X-PAYMENT header is required',
+        accepts: [requirements],
+        // Additional info for client convenience
         paymentInfo: {
           amount: totalPrice,
           currency: 'USDC',
@@ -55,7 +50,7 @@ export async function POST(request: NextRequest) {
           'Content-Type': 'application/json',
           'X-Payment-Required': 'true',
           'X-Payment-Address': PAYMENT_CONFIG.recipient,
-          'X-Payment-Amount': totalAmount,
+          'X-Payment-Amount': parseUnits(totalPrice, 6).toString(),
           'X-Payment-Network': PAYMENT_CONFIG.network,
           'X-Payment-Asset': PAYMENT_CONFIG.asset,
           'X-Facilitator-URL': FACILITATOR_URL,
@@ -64,16 +59,15 @@ export async function POST(request: NextRequest) {
     }
 
     // Decode the payment payload
-    let paymentPayload: X402PaymentPayload;
-    try {
-      paymentPayload = JSON.parse(atob(paymentHeader));
-      console.log('Received payment payload:', JSON.stringify(paymentPayload, null, 2));
-    } catch (e) {
+    const paymentPayload = decodePaymentHeader(paymentHeader);
+    if (!paymentPayload) {
       return NextResponse.json(
         { error: 'Invalid payment header format' },
         { status: 400 }
       );
     }
+
+    console.log('Received payment payload:', JSON.stringify(paymentPayload, null, 2));
 
     // Validate payload structure
     if (!paymentPayload.payload?.signature || !paymentPayload.payload?.authorization) {
@@ -96,60 +90,13 @@ export async function POST(request: NextRequest) {
 
     // Build payment requirements with the actual amount
     const totalPrice = calculatePrice(cards?.length || cardCount);
-    const paymentRequirements = {
-      ...buildPaymentRequirements(),
-      maxAmountRequired: authorization.value, // Use the actual signed amount
-    };
-
-    // DIRECT PAYMENT MODE: Accept signed authorization without external facilitator
-    // User signed an EIP-712 message - we trust the signature
-    const isDirectPayment = process.env.NEXT_PUBLIC_DIRECT_PAYMENT === 'true' || process.env.DIRECT_PAYMENT === 'true';
-
-    if (isDirectPayment) {
-      console.log('💳 DIRECT PAYMENT: Accepting signed authorization');
-      console.log('   From:', authorization.from);
-      console.log('   To:', authorization.to);
-      console.log('   Value:', authorization.value);
-
-      // Save cards to database with payment info
-      if (cards && Array.isArray(cards)) {
-        for (const card of cards) {
-          await insertCard({
-            id: card.id,
-            numbers: card.numbers,
-            owner: walletAddress || authorization.from,
-            gameMode: body.gameMode || '1-75',
-            gameTitle: body.gameTitle || 'UltraBingo',
-            txHash: `signed-${paymentPayload.payload.signature.slice(0, 20)}`,
-            paymentStatus: 'confirmed',
-          });
-        }
-      }
-
-      await confirmPayment(paymentId, `direct-${Date.now()}`);
-
-      return NextResponse.json({
-        success: true,
-        message: '💳 Payment signature accepted!',
-        gameToken: crypto.randomUUID(),
-        transaction: `direct-${paymentPayload.payload.signature.slice(0, 16)}`,
-        network: paymentPayload.network,
-        paymentId,
-        cardIds,
-        direct: true,
-        payment: {
-          from: authorization.from,
-          to: authorization.to,
-          value: authorization.value,
-        },
-      });
-    }
+    const paymentRequirements = buildPaymentRequirements(totalPrice);
 
     // DEMO MODE: Skip verification for local testing
     const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || process.env.DEMO_MODE === 'true';
 
     if (isDemoMode) {
-      console.log('🎮 DEMO MODE: Skipping payment verification');
+      console.log('DEMO MODE: Skipping payment verification');
 
       // Save cards to database with demo payment
       if (cards && Array.isArray(cards)) {
@@ -170,7 +117,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        message: '🎮 DEMO: Payment simulated!',
+        message: 'DEMO: Payment simulated!',
         gameToken: crypto.randomUUID(),
         transaction: 'demo-tx-' + Date.now(),
         network: 'demo',
@@ -180,10 +127,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Step 1: Verify payment with facilitator
+    // Step 1: Verify payment with Ultravioleta facilitator
     console.log('Verifying payment with facilitator...');
-    console.log('Payment requirements:', JSON.stringify(paymentRequirements, null, 2));
-    const verification = await verifyPaymentWithFacilitator(paymentPayload, paymentRequirements);
+    const verification = await verifyPayment(paymentPayload, paymentRequirements);
 
     if (!verification.isValid) {
       console.log('Verification failed:', verification.invalidReason);
@@ -193,9 +139,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 2: Settle payment on-chain via facilitator
+    console.log('Payment verified successfully!');
+
+    // Step 2: Settle payment on-chain via facilitator (gasless)
     console.log('Settling payment with facilitator...');
-    const settlement = await settlePaymentWithFacilitator(paymentPayload, paymentRequirements);
+    const settlement = await settlePayment(paymentPayload, paymentRequirements);
 
     if (!settlement.success) {
       console.log('Settlement failed:', settlement.error);
@@ -230,7 +178,7 @@ export async function POST(request: NextRequest) {
       message: 'Payment verified and settled!',
       gameToken: crypto.randomUUID(),
       transaction: settlement.transaction,
-      network: settlement.network,
+      network: paymentPayload.network,
       paymentId,
       cardIds,
       payment: {
