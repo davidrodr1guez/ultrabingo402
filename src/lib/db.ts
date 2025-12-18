@@ -30,7 +30,14 @@ async function initDb() {
       current_number INTEGER,
       status TEXT DEFAULT 'pending',
       created_at TEXT NOT NULL,
-      ended_at TEXT
+      ended_at TEXT,
+      entry_fee TEXT DEFAULT '0.01',
+      prize_pool TEXT DEFAULT '0',
+      total_entries INTEGER DEFAULT 0,
+      winner_address TEXT,
+      winner_card_id TEXT,
+      prize_paid TEXT DEFAULT '0',
+      prize_tx_hash TEXT
     )
   `);
 
@@ -45,13 +52,73 @@ async function initDb() {
       tx_hash TEXT,
       status TEXT DEFAULT 'pending',
       created_at TEXT NOT NULL,
-      confirmed_at TEXT
+      confirmed_at TEXT,
+      game_id TEXT
     )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS claims (
+      id TEXT PRIMARY KEY,
+      card_id TEXT NOT NULL,
+      game_id TEXT,
+      wallet_address TEXT NOT NULL,
+      marked_numbers TEXT NOT NULL,
+      card_numbers TEXT NOT NULL,
+      pattern TEXT NOT NULL,
+      called_numbers_at_claim TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      verified_at TEXT,
+      rejected_at TEXT,
+      rejection_reason TEXT,
+      prize_amount TEXT,
+      prize_tx_hash TEXT
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS winners (
+      id TEXT PRIMARY KEY,
+      game_id TEXT NOT NULL,
+      claim_id TEXT NOT NULL,
+      wallet_address TEXT NOT NULL,
+      card_id TEXT NOT NULL,
+      pattern TEXT NOT NULL,
+      prize_amount TEXT NOT NULL,
+      tx_hash TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      paid_at TEXT
+    )
+  `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS stats (
+      id TEXT PRIMARY KEY DEFAULT 'global',
+      total_games INTEGER DEFAULT 0,
+      total_cards_sold INTEGER DEFAULT 0,
+      total_revenue TEXT DEFAULT '0',
+      total_prizes_paid TEXT DEFAULT '0',
+      total_winners INTEGER DEFAULT 0,
+      updated_at TEXT
+    )
+  `);
+
+  // Initialize global stats if not exists
+  await db.execute(`
+    INSERT OR IGNORE INTO stats (id, total_games, total_cards_sold, total_revenue, total_prizes_paid, total_winners, updated_at)
+    VALUES ('global', 0, 0, '0', '0', 0, datetime('now'))
   `);
 
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_cards_owner ON cards(owner)`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_payments_wallet ON payments(wallet_address)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_payments_game ON payments(game_id)`);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_games_status ON games(status)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_claims_game ON claims(game_id)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_claims_wallet ON claims(wallet_address)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS idx_winners_game ON winners(game_id)`);
 }
 
 // Initialize on first import
@@ -83,6 +150,13 @@ export interface DbGame {
   status: string;
   created_at: string;
   ended_at: string | null;
+  entry_fee: string;
+  prize_pool: string;
+  total_entries: number;
+  winner_address: string | null;
+  winner_card_id: string | null;
+  prize_paid: string;
+  prize_tx_hash: string | null;
 }
 
 export interface DbPayment {
@@ -96,6 +170,49 @@ export interface DbPayment {
   status: string;
   created_at: string;
   confirmed_at: string | null;
+  game_id: string | null;
+}
+
+export interface DbClaim {
+  id: string;
+  card_id: string;
+  game_id: string | null;
+  wallet_address: string;
+  marked_numbers: string;
+  card_numbers: string;
+  pattern: string;
+  called_numbers_at_claim: string;
+  status: 'pending' | 'verified' | 'rejected';
+  created_at: string;
+  verified_at: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  prize_amount: string | null;
+  prize_tx_hash: string | null;
+}
+
+export interface DbWinner {
+  id: string;
+  game_id: string;
+  claim_id: string;
+  wallet_address: string;
+  card_id: string;
+  pattern: string;
+  prize_amount: string;
+  tx_hash: string | null;
+  status: 'pending' | 'paid' | 'failed';
+  created_at: string;
+  paid_at: string | null;
+}
+
+export interface DbStats {
+  id: string;
+  total_games: number;
+  total_cards_sold: number;
+  total_revenue: string;
+  total_prizes_paid: string;
+  total_winners: number;
+  updated_at: string;
 }
 
 // Card operations
@@ -181,14 +298,18 @@ export async function deleteAllCards() {
 }
 
 // Game operations
-export async function createGame(name: string, mode: string): Promise<string> {
+export async function createGame(name: string, mode: string, entryFee: string = '0.01'): Promise<string> {
   await ensureInit();
   const id = crypto.randomUUID();
   await db.execute({
-    sql: `INSERT INTO games (id, name, mode, called_numbers, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [id, name, mode, '[]', 'active', new Date().toISOString()]
+    sql: `INSERT INTO games (id, name, mode, called_numbers, status, created_at, entry_fee, prize_pool, total_entries)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, name, mode, '[]', 'active', new Date().toISOString(), entryFee, '0', 0]
   });
+
+  // Update global stats
+  await db.execute(`UPDATE stats SET total_games = total_games + 1, updated_at = datetime('now') WHERE id = 'global'`);
+
   return id;
 }
 
@@ -272,6 +393,265 @@ export async function confirmPayment(id: string, txHash: string) {
     sql: `UPDATE payments SET status = ?, tx_hash = ?, confirmed_at = ? WHERE id = ?`,
     args: ['confirmed', txHash, new Date().toISOString(), id]
   });
+}
+
+// Update game prize pool when payment is confirmed
+export async function addToPrizePool(gameId: string, amount: string, numCards: number) {
+  await ensureInit();
+  const game = await getGameById(gameId);
+  if (!game) return;
+
+  const currentPool = parseFloat(game.prize_pool || '0');
+  const newPool = currentPool + parseFloat(amount);
+  const newEntries = (game.total_entries || 0) + numCards;
+
+  await db.execute({
+    sql: `UPDATE games SET prize_pool = ?, total_entries = ? WHERE id = ?`,
+    args: [newPool.toFixed(6), newEntries, gameId]
+  });
+
+  // Update global stats
+  await db.execute({
+    sql: `UPDATE stats SET total_cards_sold = total_cards_sold + ?, total_revenue = CAST((CAST(total_revenue AS REAL) + ?) AS TEXT), updated_at = datetime('now') WHERE id = 'global'`,
+    args: [numCards, parseFloat(amount)]
+  });
+}
+
+// Set game winner
+export async function setGameWinner(gameId: string, winnerAddress: string, cardId: string, prizeAmount: string, txHash?: string) {
+  await ensureInit();
+  await db.execute({
+    sql: `UPDATE games SET winner_address = ?, winner_card_id = ?, prize_paid = ?, prize_tx_hash = ?, status = ?, ended_at = ? WHERE id = ?`,
+    args: [winnerAddress, cardId, prizeAmount, txHash || null, 'ended', new Date().toISOString(), gameId]
+  });
+}
+
+// Claim operations
+export async function createClaim(claim: {
+  cardId: string;
+  gameId: string | null;
+  walletAddress: string;
+  markedNumbers: number[];
+  cardNumbers: (number | null)[][];
+  pattern: string;
+  calledNumbersAtClaim: number[];
+}): Promise<string> {
+  await ensureInit();
+  const id = `claim_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  await db.execute({
+    sql: `INSERT INTO claims (id, card_id, game_id, wallet_address, marked_numbers, card_numbers, pattern, called_numbers_at_claim, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      claim.cardId,
+      claim.gameId,
+      claim.walletAddress,
+      JSON.stringify(claim.markedNumbers),
+      JSON.stringify(claim.cardNumbers),
+      claim.pattern,
+      JSON.stringify(claim.calledNumbersAtClaim),
+      'pending',
+      new Date().toISOString()
+    ]
+  });
+  return id;
+}
+
+export async function getClaimById(id: string): Promise<DbClaim | undefined> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT * FROM claims WHERE id = ?`,
+    args: [id]
+  });
+  return result.rows[0] as unknown as DbClaim | undefined;
+}
+
+export async function getClaimsByGame(gameId: string): Promise<DbClaim[]> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT * FROM claims WHERE game_id = ? ORDER BY created_at DESC`,
+    args: [gameId]
+  });
+  return result.rows as unknown as DbClaim[];
+}
+
+export async function getClaimsByWallet(walletAddress: string): Promise<DbClaim[]> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT * FROM claims WHERE wallet_address = ? ORDER BY created_at DESC`,
+    args: [walletAddress.toLowerCase()]
+  });
+  return result.rows as unknown as DbClaim[];
+}
+
+export async function getPendingClaims(): Promise<DbClaim[]> {
+  await ensureInit();
+  const result = await db.execute(
+    `SELECT * FROM claims WHERE status = 'pending' ORDER BY created_at ASC`
+  );
+  return result.rows as unknown as DbClaim[];
+}
+
+export async function getAllClaims(): Promise<DbClaim[]> {
+  await ensureInit();
+  const result = await db.execute(
+    `SELECT * FROM claims ORDER BY created_at DESC`
+  );
+  return result.rows as unknown as DbClaim[];
+}
+
+export async function hasExistingClaim(cardId: string): Promise<boolean> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT COUNT(*) as count FROM claims WHERE card_id = ? AND status IN ('pending', 'verified')`,
+    args: [cardId]
+  });
+  const count = (result.rows[0] as unknown as { count: number }).count;
+  return count > 0;
+}
+
+export async function verifyClaim(id: string, prizeAmount?: string, txHash?: string): Promise<DbClaim | null> {
+  await ensureInit();
+  await db.execute({
+    sql: `UPDATE claims SET status = ?, verified_at = ?, prize_amount = ?, prize_tx_hash = ? WHERE id = ?`,
+    args: ['verified', new Date().toISOString(), prizeAmount || null, txHash || null, id]
+  });
+
+  // Update global stats
+  await db.execute(`UPDATE stats SET total_winners = total_winners + 1, updated_at = datetime('now') WHERE id = 'global'`);
+
+  return getClaimById(id) as Promise<DbClaim | null>;
+}
+
+export async function rejectClaim(id: string, reason: string): Promise<DbClaim | null> {
+  await ensureInit();
+  await db.execute({
+    sql: `UPDATE claims SET status = ?, rejected_at = ?, rejection_reason = ? WHERE id = ?`,
+    args: ['rejected', new Date().toISOString(), reason, id]
+  });
+  return getClaimById(id) as Promise<DbClaim | null>;
+}
+
+// Winner operations
+export async function createWinner(winner: {
+  gameId: string;
+  claimId: string;
+  walletAddress: string;
+  cardId: string;
+  pattern: string;
+  prizeAmount: string;
+}): Promise<string> {
+  await ensureInit();
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO winners (id, game_id, claim_id, wallet_address, card_id, pattern, prize_amount, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      id,
+      winner.gameId,
+      winner.claimId,
+      winner.walletAddress,
+      winner.cardId,
+      winner.pattern,
+      winner.prizeAmount,
+      'pending',
+      new Date().toISOString()
+    ]
+  });
+  return id;
+}
+
+export async function markWinnerPaid(id: string, txHash: string) {
+  await ensureInit();
+  await db.execute({
+    sql: `UPDATE winners SET status = ?, tx_hash = ?, paid_at = ? WHERE id = ?`,
+    args: ['paid', txHash, new Date().toISOString(), id]
+  });
+
+  // Update global stats with prize amount
+  const winner = await getWinnerById(id);
+  if (winner) {
+    await db.execute({
+      sql: `UPDATE stats SET total_prizes_paid = CAST((CAST(total_prizes_paid AS REAL) + ?) AS TEXT), updated_at = datetime('now') WHERE id = 'global'`,
+      args: [parseFloat(winner.prize_amount)]
+    });
+  }
+}
+
+export async function getWinnerById(id: string): Promise<DbWinner | undefined> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT * FROM winners WHERE id = ?`,
+    args: [id]
+  });
+  return result.rows[0] as unknown as DbWinner | undefined;
+}
+
+export async function getWinnersByGame(gameId: string): Promise<DbWinner[]> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT * FROM winners WHERE game_id = ? ORDER BY created_at DESC`,
+    args: [gameId]
+  });
+  return result.rows as unknown as DbWinner[];
+}
+
+export async function getAllWinners(): Promise<DbWinner[]> {
+  await ensureInit();
+  const result = await db.execute(
+    `SELECT * FROM winners ORDER BY created_at DESC`
+  );
+  return result.rows as unknown as DbWinner[];
+}
+
+// Stats operations
+export async function getGlobalStats(): Promise<DbStats | undefined> {
+  await ensureInit();
+  const result = await db.execute(
+    `SELECT * FROM stats WHERE id = 'global'`
+  );
+  return result.rows[0] as unknown as DbStats | undefined;
+}
+
+export async function getGameStats(gameId: string): Promise<{
+  game: DbGame | undefined;
+  totalClaims: number;
+  verifiedClaims: number;
+  prizePool: string;
+}> {
+  await ensureInit();
+  const game = await getGameById(gameId);
+
+  const claimsResult = await db.execute({
+    sql: `SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'verified' THEN 1 ELSE 0 END) as verified
+          FROM claims WHERE game_id = ?`,
+    args: [gameId]
+  });
+
+  const stats = claimsResult.rows[0] as unknown as { total: number; verified: number };
+
+  return {
+    game,
+    totalClaims: stats.total || 0,
+    verifiedClaims: stats.verified || 0,
+    prizePool: game?.prize_pool || '0'
+  };
+}
+
+// Get recent games with stats
+export async function getRecentGamesWithStats(limit: number = 10): Promise<Array<DbGame & { winner_count: number }>> {
+  await ensureInit();
+  const result = await db.execute({
+    sql: `SELECT g.*,
+            (SELECT COUNT(*) FROM winners w WHERE w.game_id = g.id) as winner_count
+          FROM games g
+          ORDER BY g.created_at DESC
+          LIMIT ?`,
+    args: [limit]
+  });
+  return result.rows as unknown as Array<DbGame & { winner_count: number }>;
 }
 
 export default db;

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { submitClaim, hasExistingClaim, getClaimsByWallet } from '@/lib/claims';
 import { validateBingo, WinPattern, BingoCard } from '@/lib/bingo';
-import { getActiveGame } from '@/lib/db';
+import { getActiveGame, createClaim, hasExistingClaim, getClaimsByWallet as dbGetClaimsByWallet } from '@/lib/db';
 
 // POST - Submit a BINGO claim
 export async function POST(request: NextRequest) {
@@ -45,7 +44,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if this card already has a claim
-    if (hasExistingClaim(cardId)) {
+    const existingClaim = await hasExistingClaim(cardId);
+    if (existingClaim) {
       return NextResponse.json(
         { error: 'This card already has a pending or verified claim' },
         { status: 400 }
@@ -65,7 +65,6 @@ export async function POST(request: NextRequest) {
         calledNumbers = JSON.parse(activeGame.called_numbers);
       }
     } catch (error) {
-      // Database might not be available in demo mode
       console.log('Could not fetch active game:', error);
     }
 
@@ -92,7 +91,7 @@ export async function POST(request: NextRequest) {
 
     // If we have called numbers from the game, verify marked numbers were actually called
     if (calledNumbers.length > 0) {
-      const invalidMarks = markedNumbers.filter(num => !calledNumbers.includes(num));
+      const invalidMarks = markedNumbers.filter((num: number) => !calledNumbers.includes(num));
       if (invalidMarks.length > 0) {
         return NextResponse.json(
           {
@@ -104,15 +103,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Submit the claim
-    const claim = submitClaim({
+    // Submit the claim to database
+    const claimId = await createClaim({
       cardId,
-      walletAddress,
+      gameId,
+      walletAddress: walletAddress.toLowerCase(),
       markedNumbers,
       cardNumbers,
       pattern,
-      gameId,
-      gameName,
       calledNumbersAtClaim: calledNumbers,
     });
 
@@ -120,9 +118,10 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'BINGO claim submitted! Waiting for verification.',
       claim: {
-        id: claim.id,
-        status: claim.status,
-        createdAt: claim.createdAt,
+        id: claimId,
+        status: 'pending',
+        gameId,
+        gameName,
       },
     });
 
@@ -148,9 +147,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const claims = getClaimsByWallet(walletAddress);
+    const claims = await dbGetClaimsByWallet(walletAddress);
 
-    return NextResponse.json({ claims });
+    // Parse JSON fields for response
+    const parsedClaims = claims.map(claim => ({
+      ...claim,
+      markedNumbers: JSON.parse(claim.marked_numbers),
+      cardNumbers: JSON.parse(claim.card_numbers),
+      calledNumbersAtClaim: JSON.parse(claim.called_numbers_at_claim),
+    }));
+
+    return NextResponse.json({ claims: parsedClaims });
 
   } catch (error) {
     console.error('Error fetching claims:', error);
