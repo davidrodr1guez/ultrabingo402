@@ -95,7 +95,7 @@ async function initDb() {
 
   await db.execute(`
     CREATE TABLE IF NOT EXISTS stats (
-      id TEXT PRIMARY KEY DEFAULT 'global',
+      id TEXT PRIMARY KEY,
       total_games INTEGER DEFAULT 0,
       total_cards_sold INTEGER DEFAULT 0,
       total_revenue TEXT DEFAULT '0',
