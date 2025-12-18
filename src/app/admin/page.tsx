@@ -14,7 +14,7 @@ interface DbCard {
 }
 
 export default function AdminPanel() {
-  const [gameMode, setGameMode] = useState<GameMode>('1-75');
+  const gameMode: GameMode = '1-75'; // Fixed to 75-ball mode
   const [calledNumbers, setCalledNumbers] = useState<number[]>([]);
   const [currentNumber, setCurrentNumber] = useState<number | null>(null);
   const [gameActive, setGameActive] = useState(false);
@@ -216,23 +216,6 @@ export default function AdminPanel() {
         {/* Control Panel */}
         <section className="control-panel">
           <div className="control-row">
-            <div className="mode-toggle">
-              <button
-                className={`toggle-btn ${gameMode === '1-75' ? 'active' : ''}`}
-                onClick={() => !gameActive && setGameMode('1-75')}
-                disabled={gameActive}
-              >
-                75 Ball
-              </button>
-              <button
-                className={`toggle-btn ${gameMode === '1-90' ? 'active' : ''}`}
-                onClick={() => !gameActive && setGameMode('1-90')}
-                disabled={gameActive}
-              >
-                90 Ball
-              </button>
-            </div>
-
             <div className="game-actions">
               {!gameActive ? (
                 <button className="btn btn-start" onClick={handleStartGame}>
@@ -298,38 +281,14 @@ export default function AdminPanel() {
         {/* Number Board */}
         <section className="board-section">
           <div className="panel">
-            {gameMode === '1-75' ? (
-              <div className="board-75">
-                {['B', 'I', 'N', 'G', 'O'].map((letter, colIdx) => {
-                  const start = colIdx * 15 + 1;
-                  return (
-                    <div key={letter} className="board-column">
-                      <div className="column-header">{letter}</div>
-                      <div className="column-numbers">
-                        {Array.from({ length: 15 }, (_, i) => start + i).map(num => (
-                          <button
-                            key={num}
-                            className={`num-cell ${calledNumbers.includes(num) ? 'called' : ''} ${currentNumber === num ? 'current' : ''}`}
-                            onClick={() => handleNumberClick(num)}
-                            disabled={!gameActive}
-                          >
-                            {num}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="board-90">
-                {Array.from({ length: 9 }, (_, colIdx) => {
-                  const start = colIdx === 0 ? 1 : colIdx * 10;
-                  const end = colIdx === 8 ? 90 : (colIdx + 1) * 10 - 1;
-                  const count = end - start + 1;
-                  return (
-                    <div key={colIdx} className="board-column">
-                      {Array.from({ length: count }, (_, i) => start + i).map(num => (
+            <div className="board-75">
+              {['B', 'I', 'N', 'G', 'O'].map((letter, colIdx) => {
+                const start = colIdx * 15 + 1;
+                return (
+                  <div key={letter} className="board-column">
+                    <div className="column-header">{letter}</div>
+                    <div className="column-numbers">
+                      {Array.from({ length: 15 }, (_, i) => start + i).map(num => (
                         <button
                           key={num}
                           className={`num-cell ${calledNumbers.includes(num) ? 'called' : ''} ${currentNumber === num ? 'current' : ''}`}
@@ -340,10 +299,10 @@ export default function AdminPanel() {
                         </button>
                       ))}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </section>
 

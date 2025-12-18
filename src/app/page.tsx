@@ -19,7 +19,7 @@ export default function Home() {
   const { isConnected, address } = useAccount();
   const { createPayment, isProcessing: isSigningPayment } = useX402Payment();
   const [cards, setCards] = useState<BingoCardType[]>([]);
-  const [gameMode, setGameMode] = useState<GameMode>('1-75');
+  const gameMode: GameMode = '1-75'; // Fixed to 75-ball mode
   const [cardCount, setCardCount] = useState(1);
   const [gameTitle, setGameTitle] = useState('BINGO');
   const [isPaid, setIsPaid] = useState(false);
@@ -170,26 +170,6 @@ export default function Home() {
                   onChange={(e) => setGameTitle(e.target.value)}
                   placeholder="Enter title..."
                 />
-              </div>
-
-              <div className="form-group">
-                <label className="label">Game Type</label>
-                <div className="toggle-group">
-                  <button
-                    className={`toggle-btn ${gameMode === '1-75' ? 'active' : ''}`}
-                    onClick={() => setGameMode('1-75')}
-                  >
-                    <span className="toggle-icon">75</span>
-                    <span>Ball (US)</span>
-                  </button>
-                  <button
-                    className={`toggle-btn ${gameMode === '1-90' ? 'active' : ''}`}
-                    onClick={() => setGameMode('1-90')}
-                  >
-                    <span className="toggle-icon">90</span>
-                    <span>Ball (UK)</span>
-                  </button>
-                </div>
               </div>
 
               <div className="form-group">
