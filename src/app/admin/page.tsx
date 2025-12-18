@@ -1,7 +1,15 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { ConnectKitButton } from 'connectkit';
+import { useAccount } from 'wagmi';
 import { getBingoLetter, GameMode, WinPattern } from '@/lib/bingo';
+
+// Get admin wallets from environment variable
+const ADMIN_WALLETS = (process.env.NEXT_PUBLIC_ADMIN_WALLETS || '')
+  .split(',')
+  .map(addr => addr.trim().toLowerCase())
+  .filter(Boolean);
 
 interface DbCard {
   id: string;
@@ -14,6 +22,9 @@ interface DbCard {
 }
 
 export default function AdminPanel() {
+  const { isConnected, address } = useAccount();
+  const isAuthorized = address && ADMIN_WALLETS.includes(address.toLowerCase());
+
   const gameMode: GameMode = '1-75'; // Fixed to 75-ball mode
   const [calledNumbers, setCalledNumbers] = useState<number[]>([]);
   const [currentNumber, setCurrentNumber] = useState<number | null>(null);
@@ -186,6 +197,158 @@ export default function AdminPanel() {
       }
     }
   };
+
+  // Show connect wallet screen if not connected
+  if (!isConnected) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <div className="auth-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0110 0v4" />
+            </svg>
+          </div>
+          <h1>Admin Access</h1>
+          <p>Connect your wallet to access the admin panel.</p>
+          <div className="auth-connect">
+            <ConnectKitButton />
+          </div>
+        </div>
+        <style jsx>{`
+          .auth-screen {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a0033 50%, #0a0a0a 100%);
+            padding: var(--space-4);
+          }
+          .auth-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-xl);
+            padding: var(--space-8);
+            text-align: center;
+            max-width: 400px;
+          }
+          .auth-icon {
+            width: 64px;
+            height: 64px;
+            background: var(--uv-violet-glow);
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto var(--space-5);
+            color: var(--uv-violet-light);
+          }
+          .auth-icon svg {
+            width: 32px;
+            height: 32px;
+          }
+          .auth-card h1 {
+            font-size: 1.5rem;
+            margin-bottom: var(--space-2);
+          }
+          .auth-card p {
+            color: var(--text-muted);
+            margin-bottom: var(--space-6);
+          }
+          .auth-connect {
+            display: flex;
+            justify-content: center;
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // Show access denied if wallet is not authorized
+  if (!isAuthorized) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card denied">
+          <div className="auth-icon denied">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M4.93 4.93l14.14 14.14" />
+            </svg>
+          </div>
+          <h1>Access Denied</h1>
+          <p>Your wallet is not authorized to access the admin panel.</p>
+          <div className="wallet-address">
+            {address?.slice(0, 6)}...{address?.slice(-4)}
+          </div>
+          <a href="/" className="back-link">Back to Home</a>
+        </div>
+        <style jsx>{`
+          .auth-screen {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a0033 50%, #0a0a0a 100%);
+            padding: var(--space-4);
+          }
+          .auth-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-xl);
+            padding: var(--space-8);
+            text-align: center;
+            max-width: 400px;
+          }
+          .auth-card.denied {
+            border-color: var(--color-error);
+          }
+          .auth-icon {
+            width: 64px;
+            height: 64px;
+            background: var(--uv-violet-glow);
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto var(--space-5);
+            color: var(--uv-violet-light);
+          }
+          .auth-icon.denied {
+            background: var(--color-error-bg);
+            color: var(--color-error);
+          }
+          .auth-icon svg {
+            width: 32px;
+            height: 32px;
+          }
+          .auth-card h1 {
+            font-size: 1.5rem;
+            margin-bottom: var(--space-2);
+          }
+          .auth-card p {
+            color: var(--text-muted);
+            margin-bottom: var(--space-4);
+          }
+          .wallet-address {
+            font-family: var(--font-mono);
+            background: var(--bg-tertiary);
+            padding: var(--space-2) var(--space-4);
+            border-radius: var(--radius-md);
+            color: var(--text-secondary);
+            margin-bottom: var(--space-5);
+            display: inline-block;
+          }
+          .back-link {
+            color: var(--uv-violet-light);
+            text-decoration: none;
+          }
+          .back-link:hover {
+            text-decoration: underline;
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="admin">
