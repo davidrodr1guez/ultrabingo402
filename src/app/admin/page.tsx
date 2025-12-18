@@ -434,7 +434,7 @@ export default function AdminPanel() {
       {/* Header */}
       <header className="header">
         <div className="header-inner">
-          <div className="brand">
+          <a href="/" className="brand">
             <div className="brand-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -445,7 +445,14 @@ export default function AdminPanel() {
             </div>
             <span className="brand-name">UltraBingo</span>
             <span className="admin-badge">Admin</span>
-          </div>
+          </a>
+          <a href="/" className="home-btn" title="Back to Home">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
+            <span>Inicio</span>
+          </a>
           <div className="game-name-wrapper">
             <input
               type="text"
@@ -837,6 +844,32 @@ export default function AdminPanel() {
           display: flex;
           align-items: center;
           gap: var(--space-3);
+          text-decoration: none;
+          color: inherit;
+        }
+
+        .brand:hover {
+          opacity: 0.9;
+        }
+
+        .home-btn {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          padding: var(--space-2) var(--space-3);
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-default);
+          border-radius: var(--radius-md);
+          color: var(--text-secondary);
+          text-decoration: none;
+          font-size: 0.85rem;
+          transition: all var(--transition-fast);
+        }
+
+        .home-btn:hover {
+          background: var(--uv-violet);
+          border-color: var(--uv-violet);
+          color: white;
         }
 
         .brand-icon {
