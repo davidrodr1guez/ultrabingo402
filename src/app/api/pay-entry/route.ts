@@ -8,7 +8,7 @@ import {
   X402PaymentPayload,
   buildPaymentRequirements,
 } from '@/lib/x402';
-import { insertCard, createPayment, confirmPayment, updateCardPayment } from '@/lib/db';
+import { insertCard, createPayment, confirmPayment, updateCardPayment, getActiveGame, addToPrizePool } from '@/lib/db';
 
 // Calculate price based on number of cards
 function calculatePrice(cardCount: number): string {
@@ -128,6 +128,12 @@ export async function POST(request: NextRequest) {
 
       await confirmPayment(paymentId, `direct-${Date.now()}`);
 
+      // Add to prize pool of active game
+      const activeGame = await getActiveGame();
+      if (activeGame) {
+        await addToPrizePool(activeGame.id, totalPrice, cards?.length || cardCount);
+      }
+
       return NextResponse.json({
         success: true,
         message: '💳 Payment signature accepted!',
@@ -137,6 +143,7 @@ export async function POST(request: NextRequest) {
         paymentId,
         cardIds,
         direct: true,
+        prizePoolUpdated: !!activeGame,
         payment: {
           from: authorization.from,
           to: authorization.to,
@@ -168,6 +175,12 @@ export async function POST(request: NextRequest) {
 
       await confirmPayment(paymentId, 'demo-' + Date.now());
 
+      // Add to prize pool of active game
+      const activeGame = await getActiveGame();
+      if (activeGame) {
+        await addToPrizePool(activeGame.id, totalPrice, cards?.length || cardCount);
+      }
+
       return NextResponse.json({
         success: true,
         message: '🎮 DEMO: Payment simulated!',
@@ -177,6 +190,7 @@ export async function POST(request: NextRequest) {
         paymentId,
         cardIds,
         demo: true,
+        prizePoolUpdated: !!activeGame,
       });
     }
 
@@ -225,6 +239,12 @@ export async function POST(request: NextRequest) {
 
     console.log(`Payment settled! TX: ${settlement.transaction}`);
 
+    // Add to prize pool of active game
+    const activeGame = await getActiveGame();
+    if (activeGame) {
+      await addToPrizePool(activeGame.id, totalPrice, cards?.length || cardCount);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Payment verified and settled!',
@@ -233,6 +253,7 @@ export async function POST(request: NextRequest) {
       network: settlement.network,
       paymentId,
       cardIds,
+      prizePoolUpdated: !!activeGame,
       payment: {
         from: authorization.from,
         to: authorization.to,
