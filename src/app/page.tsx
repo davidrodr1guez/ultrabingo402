@@ -13,6 +13,7 @@ import { useX402Payment } from '@/hooks/useX402Payment';
 
 const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x97a3935fBF2d4ac9437dc10e62722D1549C8C43A';
 const PRICE_PER_CARD = 0.01;
+const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
 
 export default function Home() {
   const { isConnected, address } = useAccount();
@@ -243,7 +244,45 @@ export default function Home() {
                   <div className="price-value">${totalPrice.toFixed(2)} <span className="price-currency">USDC</span></div>
                 </div>
 
-                {!isConnected ? (
+                {DEMO_MODE ? (
+                  /* Demo Mode - Skip payment */
+                  <div className="demo-flow">
+                    <div className="demo-badge">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                      </svg>
+                      Demo Mode
+                    </div>
+                    {!isPaid ? (
+                      <button
+                        className="btn btn-primary btn-lg btn-full"
+                        onClick={() => setIsPaid(true)}
+                      >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3" />
+                        </svg>
+                        Reveal Cards (Demo)
+                      </button>
+                    ) : (
+                      <>
+                        <button className="btn btn-primary btn-lg btn-full" onClick={handleDownloadPDF}>
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                          </svg>
+                          Download PDF
+                        </button>
+                        <button className="btn btn-secondary btn-full" onClick={handlePrint}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" />
+                            <rect x="6" y="14" width="12" height="8" />
+                          </svg>
+                          Print
+                        </button>
+                      </>
+                    )}
+                    <p className="demo-note">Payment disabled for testing</p>
+                  </div>
+                ) : !isConnected ? (
                   <div className="connect-cta">
                     <p className="text-muted">Connect wallet to continue</p>
                     <ConnectKitButton />
@@ -671,6 +710,32 @@ export default function Home() {
           justify-content: center;
           gap: var(--space-2);
           font-size: 0.8rem;
+          color: var(--text-muted);
+        }
+
+        /* Demo Mode */
+        .demo-flow {
+          display: flex;
+          flex-direction: column;
+          gap: var(--space-3);
+        }
+
+        .demo-badge {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-2);
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-warning-bg);
+          color: var(--color-warning);
+          border-radius: var(--radius-md);
+          font-size: 0.85rem;
+          font-weight: 500;
+        }
+
+        .demo-note {
+          text-align: center;
+          font-size: 0.75rem;
           color: var(--text-muted);
         }
 
