@@ -17,6 +17,24 @@ const PAYMENT_RECIPIENT = process.env.NEXT_PUBLIC_PAYMENT_RECIPIENT || '0x97a393
 const PRICE_PER_CARD = 0.01;
 const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
 
+// Save cards to localStorage for the /play page
+function saveCardsToStorage(cards: BingoCardType[], owner: string, gameTitle: string) {
+  const key = `bingo_cards_${owner.toLowerCase()}`;
+  const existing = localStorage.getItem(key);
+  let allCards = existing ? JSON.parse(existing) : [];
+
+  const newCards = cards.map(c => ({
+    id: c.id,
+    numbers: c.numbers,
+    owner: owner.toLowerCase(),
+    gameTitle,
+    purchasedAt: new Date().toISOString(),
+  }));
+
+  allCards = [...allCards, ...newCards];
+  localStorage.setItem(key, JSON.stringify(allCards));
+}
+
 interface GameState {
   id: string;
   name: string;
@@ -179,6 +197,7 @@ export default function Home() {
       const data = await response.json();
       if (response.ok && data.success) {
         registerCards(cards, address || 'anonymous', gameMode, gameTitle);
+        saveCardsToStorage(cards, address || 'anonymous', gameTitle);
         setIsPaid(true);
       } else {
         setPaymentError(data.error || data.details || 'Payment failed');
@@ -466,7 +485,10 @@ export default function Home() {
                       Demo Mode
                     </div>
                     {!isPaid ? (
-                      <button className="btn btn-primary btn-lg btn-full" onClick={() => setIsPaid(true)}>
+                      <button className="btn btn-primary btn-lg btn-full" onClick={() => {
+                        saveCardsToStorage(cards, address || 'demo-user', gameTitle);
+                        setIsPaid(true);
+                      }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M10 17l5-5-5-5M13.8 12H3" />
                         </svg>
@@ -487,6 +509,12 @@ export default function Home() {
                           </svg>
                           Print
                         </button>
+                        <a href="/play" className="btn btn-play btn-full">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                          </svg>
+                          Play Live
+                        </a>
                       </>
                     )}
                     <p className="demo-note">Payment disabled for testing</p>
@@ -555,6 +583,12 @@ export default function Home() {
                       </svg>
                       Print
                     </button>
+                    <a href="/play" className="btn btn-play btn-full">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                      Play Live
+                    </a>
                   </div>
                 )}
               </div>
@@ -1327,6 +1361,21 @@ export default function Home() {
 
         .btn-pay:hover:not(:disabled) {
           box-shadow: var(--shadow-glow);
+        }
+
+        .btn-play {
+          background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+          color: white;
+          font-weight: 600;
+          text-decoration: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-2);
+        }
+
+        .btn-play:hover {
+          box-shadow: 0 0 20px rgba(0, 184, 148, 0.4);
         }
 
         .payment-info {

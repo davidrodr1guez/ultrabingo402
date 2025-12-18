@@ -1,645 +1,992 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { ConnectKitButton } from 'connectkit';
 import { useAccount } from 'wagmi';
-import Image from 'next/image';
-import Link from 'next/link';
-import { BingoCard as BingoCardType, checkWin, getBingoLetter, speakNumber } from '@/lib/bingo';
-import BingoCard from '@/components/BingoCard';
-import ConnectWalletButton from '@/components/ConnectWalletButton';
-import { BINGO_THEMES, BingoTheme, DEFAULT_THEME } from '@/lib/themes';
+import { BingoCard as BingoCardType, validateBingo, WinPattern } from '@/lib/bingo';
 
-// Game state interface
 interface GameState {
-    id: string;
-    name: string;
-    mode: '1-75' | '1-90';
-    status: string;
-    called_numbers: number[];
+  id: string;
+  name: string;
+  status: string;
+  called_numbers: number[];
+  mode: string;
+}
+
+interface StoredCard {
+  id: string;
+  numbers: (number | null)[][];
+  owner: string;
+  gameTitle: string;
+  purchasedAt: string;
 }
 
 export default function PlayPage() {
-    const { isConnected, address } = useAccount();
+  const { isConnected, address } = useAccount();
+  const [cards, setCards] = useState<BingoCardType[]>([]);
+  const [activeGame, setActiveGame] = useState<GameState | null>(null);
+  const [markedNumbers, setMarkedNumbers] = useState<Record<string, Set<number>>>({});
+  const [winPattern, setWinPattern] = useState<WinPattern>('line');
+  const [bingoCards, setBingoCards] = useState<Set<string>>(new Set());
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastCalledNumber, setLastCalledNumber] = useState<number | null>(null);
 
-    // Game State
-    const [activeGame, setActiveGame] = useState<GameState | null>(null);
-    const [lastCalledNumber, setLastCalledNumber] = useState<number | null>(null);
-    const [selectedTheme, setSelectedTheme] = useState<BingoTheme>(DEFAULT_THEME);
+  // Load cards from localStorage
+  useEffect(() => {
+    const owner = address?.toLowerCase() || 'demo-user';
+    const key = `bingo_cards_${owner}`;
+    const stored = localStorage.getItem(key);
 
-    // Player State
-    const [myCards, setMyCards] = useState<BingoCardType[]>([]);
-    const [isLoadingCards, setIsLoadingCards] = useState(false);
-
-    // UI State
-    const [notification, setNotification] = useState<{ msg: string, type: 'info' | 'win' } | null>(null);
-    const [showThemeSelector, setShowThemeSelector] = useState(false);
-
-    // Poll for active game
-    useEffect(() => {
-        const fetchGame = async () => {
-            try {
-                const res = await fetch('/api/games?active=true');
-                const data = await res.json();
-
-                if (data.game) {
-                    setActiveGame(prev => {
-                        // Detect new number
-                        const newNumbers = data.game.called_numbers;
-                        const oldNumbers = prev?.called_numbers || [];
-
-                        if (newNumbers.length > oldNumbers.length) {
-                            const last = newNumbers[newNumbers.length - 1];
-                            // Only speak if it's a new number (not initial load)
-                            if (prev && last !== oldNumbers[oldNumbers.length - 1]) {
-                                setLastCalledNumber(last);
-                                speakNumber(last, data.game.mode);
-                            } else if (!prev) {
-                                // Initial load
-                                setLastCalledNumber(last);
-                            }
-                        }
-                        return data.game;
-                    });
-                } else {
-                    setActiveGame(null);
-                }
-            } catch (error) {
-                console.error('Error polling game:', error);
-            }
-        };
-
-        fetchGame();
-        const interval = setInterval(fetchGame, 3000); // Poll every 3s
-        return () => clearInterval(interval);
-    }, []);
-
-    // Fetch player cards when connected
-    useEffect(() => {
-        if (!isConnected || !address) {
-            setMyCards([]);
-            return;
-        }
-
-        const fetchCards = async () => {
-            setIsLoadingCards(true);
-            try {
-                const res = await fetch(`/api/cards?owner=${address}`);
-                const data = await res.json();
-                if (data.cards) {
-                    const formattedCards: BingoCardType[] = data.cards.map((c: any) => ({
-                        id: c.id,
-                        numbers: c.numbers,
-                        marked: Array(5).fill(null).map(() => Array(5).fill(false)),
-                        title: c.game_title
-                    }));
-                    setMyCards(formattedCards);
-                }
-            } catch (error) {
-                console.error('Error fetching cards:', error);
-            } finally {
-                setIsLoadingCards(false);
-            }
-        };
-
-        fetchCards();
-    }, [isConnected, address]);
-
-    // Handle marking a number
-    const handleMarkNumber = (cardId: string, number: number) => {
-        setMyCards(prevCards => prevCards.map(card => {
-            if (card.id !== cardId) return card;
-
-            // Find position of number
-            let newMarked = [...card.marked.map(row => [...row])];
-            let found = false;
-
-            card.numbers.forEach((row, rIdx) => {
-                row.forEach((n, cIdx) => {
-                    if (n === number) {
-                        newMarked[rIdx][cIdx] = true;
-                        found = true;
-                    }
-                });
-            });
-
-            if (found) {
-                // Check for Win (Line default)
-                const updatedCard = { ...card, marked: newMarked };
-                const isWin = checkWin(updatedCard, 'line');
-
-                if (isWin) {
-                    // Optional: Auto-notify or just let user click Bingo
-                    console.log('Possible Line Bingo on card', card.id);
-                }
-                return updatedCard;
-            }
-            return card;
+    if (stored) {
+      try {
+        const parsed: StoredCard[] = JSON.parse(stored);
+        const loadedCards: BingoCardType[] = parsed.map(c => ({
+          id: c.id,
+          numbers: c.numbers,
+          marked: Array(c.numbers.length).fill(null).map(() => Array(c.numbers[0]?.length || 5).fill(false)),
         }));
-    };
+        setCards(loadedCards);
+      } catch (e) {
+        console.error('Error loading cards:', e);
+      }
+    }
+    setIsLoading(false);
+  }, [address]);
 
-    const handleClaimBingo = (card: BingoCardType) => {
-        setNotification({ msg: `Verificando BINGO para cartón ${card.id.slice(0, 8)}...`, type: 'info' });
-
-        // Simple client check for feedback
-        if (checkWin(card, 'line') || checkWin(card, 'full-house')) {
-            setNotification({ msg: `¡BINGO! Grita "Bingo" y muéstrale tu cartón (ID: ${card.id.slice(0, 4)}) al host!`, type: 'win' });
-
-            // Fanfare speech
-            if (window.speechSynthesis) {
-                const utterance = new SpeechSynthesisUtterance('Bingo! Bingo! Bingo!');
-                utterance.rate = 1.2;
-                window.speechSynthesis.speak(utterance);
+  // Poll for active game
+  useEffect(() => {
+    const pollGame = async () => {
+      try {
+        const res = await fetch('/api/games?active=true');
+        const data = await res.json();
+        if (data.game) {
+          const newNumbers = data.game.called_numbers;
+          if (newNumbers.length > 0) {
+            const newLast = newNumbers[newNumbers.length - 1];
+            if (newLast !== lastCalledNumber) {
+              setLastCalledNumber(newLast);
             }
+          }
+          setActiveGame(data.game);
         } else {
-            setNotification({ msg: `Aún no parece haber Bingo. Revisa tus números.`, type: 'info' });
+          setActiveGame(null);
         }
+      } catch (error) {
+        console.log('No active game');
+      }
     };
 
-    return (
-        <main className="play-container" style={{ background: selectedTheme.colors.background }}>
-            <header className="play-header">
-                <Link href="/" className="logo-link">
-                    <Image src="/logo.svg" alt="UltraBingo" width={120} height={70} />
-                </Link>
-                <div className="header-right">
-                    <button
-                        className="theme-toggle-btn"
-                        onClick={() => setShowThemeSelector(!showThemeSelector)}
-                        title="Cambiar Tema"
-                    >
-                        🎨
-                    </button>
-                    <ConnectWalletButton />
-                </div>
-            </header>
+    pollGame();
+    const interval = setInterval(pollGame, 2000);
+    return () => clearInterval(interval);
+  }, [lastCalledNumber]);
 
-            {showThemeSelector && (
-                <div className="theme-selector-overlay">
-                    <div className="theme-selector-modal">
-                        <h3>Elije tu Estilo</h3>
-                        <div className="theme-grid-play">
-                            {Object.values(BINGO_THEMES).map(theme => (
-                                <button
-                                    key={theme.id}
-                                    className={`theme-btn-play ${selectedTheme.id === theme.id ? 'active' : ''}`}
-                                    onClick={() => {
-                                        setSelectedTheme(theme);
-                                        setShowThemeSelector(false);
-                                    }}
-                                >
-                                    <div className="theme-preview-play" style={{ background: theme.colors.cardBg }}>
-                                        <div className="theme-accent-play" style={{ background: theme.colors.headerBg }}></div>
-                                    </div>
-                                    <span>{theme.name}</span>
-                                </button>
-                            ))}
-                        </div>
-                        <button className="close-theme-btn" onClick={() => setShowThemeSelector(false)}>Cerrar</button>
-                    </div>
-                </div>
+  // Check for BINGO
+  useEffect(() => {
+    if (cards.length === 0) return;
+
+    const newBingoCards = new Set<string>();
+
+    cards.forEach(card => {
+      const cardMarked = markedNumbers[card.id] || new Set<number>();
+      const hasBingo = validateBingo(card, Array.from(cardMarked), winPattern);
+      if (hasBingo) {
+        newBingoCards.add(card.id);
+      }
+    });
+
+    const newBingoArray = Array.from(newBingoCards);
+    for (const id of newBingoArray) {
+      if (!bingoCards.has(id)) {
+        setShowConfetti(true);
+        setTimeout(() => setShowConfetti(false), 4000);
+        break;
+      }
+    }
+
+    setBingoCards(newBingoCards);
+  }, [markedNumbers, cards, winPattern, bingoCards]);
+
+  const handleMarkNumber = useCallback((cardId: string, number: number) => {
+    if (number === null) return;
+
+    setMarkedNumbers(prev => {
+      const cardMarks = new Set(prev[cardId] || []);
+      if (cardMarks.has(number)) {
+        cardMarks.delete(number);
+      } else {
+        cardMarks.add(number);
+      }
+      return { ...prev, [cardId]: cardMarks };
+    });
+  }, []);
+
+  const clearMyCards = () => {
+    if (confirm('Are you sure you want to clear all your cards?')) {
+      const owner = address?.toLowerCase() || 'demo-user';
+      localStorage.removeItem(`bingo_cards_${owner}`);
+      setCards([]);
+      setMarkedNumbers({});
+      setBingoCards(new Set());
+    }
+  };
+
+  const calledNumbers = activeGame?.called_numbers || [];
+  const currentNumber = calledNumbers[calledNumbers.length - 1] || null;
+
+  return (
+    <div className="play-page">
+      {showConfetti && <Confetti />}
+
+      <div className="bg-animation">
+        <div className="bg-gradient" />
+        <div className="bg-orb orb-1" />
+        <div className="bg-orb orb-2" />
+      </div>
+
+      {/* Header */}
+      <header className="header">
+        <div className="header-inner">
+          <a href="/" className="brand">
+            <div className="brand-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+            </div>
+            <span className="brand-name">UltraBingo</span>
+            <span className="play-badge">Play</span>
+          </a>
+          <div className="header-right">
+            {activeGame && (
+              <div className="live-badge">
+                <span className="live-dot" />
+                LIVE
+              </div>
             )}
+            <ConnectKitButton />
+          </div>
+        </div>
+      </header>
 
-            {/* Game Status Bar */}
-            <div className="status-bar">
-                {activeGame ? (
-                    <div className="active-game-info">
-                        <span className="live-indicator">● EN VIVO</span>
-                        <span className="game-name">{activeGame.name}</span>
-                        <span className="ball-count">Bolas: {activeGame.called_numbers.length}</span>
-                    </div>
-                ) : (
-                    <div className="no-game-info">
-                        <span className="offline-indicator">● OFFLINE</span>
-                        <span>Esperando inicio de partida...</span>
-                    </div>
-                )}
+      {/* Game Status Bar */}
+      <div className={`game-bar ${activeGame ? 'active' : ''}`}>
+        {activeGame ? (
+          <div className="game-bar-content">
+            <div className="game-info">
+              <span className="game-label">Now Playing:</span>
+              <span className="game-name">{activeGame.name}</span>
+            </div>
+            <div className="current-number-display">
+              {currentNumber ? (
+                <div className="current-ball">
+                  <span className="ball-letter">{getBingoLetter(currentNumber)}</span>
+                  <span className="ball-number">{currentNumber}</span>
+                </div>
+              ) : (
+                <span className="waiting-text">Waiting...</span>
+              )}
+            </div>
+            <div className="game-stats">
+              <span>{calledNumbers.length} / 75</span>
+            </div>
+          </div>
+        ) : (
+          <div className="waiting-bar">
+            <div className="waiting-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 6v6l4 2" />
+              </svg>
+            </div>
+            <span>Waiting for game to start...</span>
+          </div>
+        )}
+      </div>
+
+      {/* Called Numbers Strip */}
+      {activeGame && calledNumbers.length > 0 && (
+        <div className="called-strip">
+          <span className="strip-label">Called:</span>
+          <div className="called-numbers">
+            {calledNumbers.slice().reverse().slice(0, 15).map((num, idx) => (
+              <span
+                key={num}
+                className={`called-num ${idx === 0 ? 'latest' : ''}`}
+              >
+                {getBingoLetter(num)}-{num}
+              </span>
+            ))}
+            {calledNumbers.length > 15 && (
+              <span className="more-numbers">+{calledNumbers.length - 15} more</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* BINGO Alert */}
+      {bingoCards.size > 0 && (
+        <div className="bingo-alert">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+          </svg>
+          <span>BINGO! You have a winning card!</span>
+          <button className="claim-btn">Claim Prize</button>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="main-content">
+        {isLoading ? (
+          <div className="loading-state">
+            <div className="spinner" />
+            <p>Loading your cards...</p>
+          </div>
+        ) : cards.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+              </svg>
+            </div>
+            <h2>No Cards Found</h2>
+            <p>Purchase some bingo cards to start playing!</p>
+            <a href="/" className="btn-primary">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Get Cards
+            </a>
+          </div>
+        ) : (
+          <>
+            {/* Controls */}
+            <div className="controls-bar">
+              <div className="pattern-selector">
+                <label>Win Pattern:</label>
+                <select value={winPattern} onChange={(e) => setWinPattern(e.target.value as WinPattern)}>
+                  <option value="line">Any Line</option>
+                  <option value="full-house">Full House</option>
+                  <option value="four-corners">4 Corners</option>
+                  <option value="x-pattern">X Pattern</option>
+                </select>
+              </div>
+              <div className="cards-count">
+                {cards.length} {cards.length === 1 ? 'card' : 'cards'}
+              </div>
+              <button className="clear-btn" onClick={clearMyCards}>
+                Clear Cards
+              </button>
             </div>
 
-            {/* Main Content */}
-            <div className="play-content">
-
-                {/* Left: Last Ball Display */}
-                <div className="ball-display-section" style={{ background: selectedTheme.colors.cardBg, borderColor: selectedTheme.colors.border }}>
-                    {activeGame ? (
-                        <div className="current-ball-wrapper">
-                            <div className={`current-ball ${lastCalledNumber ? 'pop' : ''}`} style={{ background: selectedTheme.colors.headerBg }}>
-                                {lastCalledNumber ? (
-                                    <>
-                                        {activeGame.mode === '1-75' && (
-                                            <span className="ball-letter">{getBingoLetter(lastCalledNumber)}</span>
-                                        )}
-                                        <span className="ball-number">{lastCalledNumber}</span>
-                                    </>
-                                ) : (
-                                    <span className="waiting-text">Esperando...</span>
-                                )}
-                            </div>
-                            <div className="last-called-list">
-                                {activeGame.called_numbers.slice(-5, -1).reverse().map((num, i) => (
-                                    <span key={i} className="mini-ball" style={{ background: selectedTheme.colors.cellBg, color: selectedTheme.colors.cellText }}>{num}</span>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="waiting-screen">
-                            <div className="loader">🎱</div>
-                            <p>El juego comenzará pronto</p>
-                        </div>
-                    )}
+            {/* Cards Grid */}
+            <div className="cards-grid">
+              {cards.map((card, index) => (
+                <div key={card.id} className={`card-container ${bingoCards.has(card.id) ? 'has-bingo' : ''}`}>
+                  <div className="card-header">
+                    <span className="card-number">Card #{index + 1}</span>
+                    {bingoCards.has(card.id) && <span className="bingo-badge">BINGO!</span>}
+                  </div>
+                  <BingoCardDisplay
+                    card={card}
+                    markedNumbers={markedNumbers[card.id] || new Set()}
+                    calledNumbers={calledNumbers}
+                    currentNumber={currentNumber}
+                    onMarkNumber={(num) => handleMarkNumber(card.id, num)}
+                  />
+                  <div className="card-id">{card.id.slice(0, 8)}</div>
                 </div>
-
-                {/* Right: Player Cards */}
-                <div className="player-cards-section">
-                    {!isConnected ? (
-                        <div className="connect-prompt">
-                            <h2>Conecta tu wallet para jugar</h2>
-                            <p>Podrás ver tus cartones comprados aquí.</p>
-                        </div>
-                    ) : isLoadingCards ? (
-                        <div className="loading-cards">Cargando tus cartones...</div>
-                    ) : myCards.length === 0 ? (
-                        <div className="no-cards">
-                            <p>No tienes cartones para este juego.</p>
-                            <Link href="/" className="buy-link">Comprar Cartones</Link>
-                        </div>
-                    ) : (
-                        <div className="cards-grid-play">
-                            {myCards.map(card => (
-                                <div key={card.id} className="play-card-wrapper">
-                                    <div className="play-card-header">
-                                        <span className="card-id">#{card.id.slice(0, 4)}</span>
-                                        <button
-                                            className="btn-bingo"
-                                            onClick={() => handleClaimBingo(card)}
-                                            style={{ background: selectedTheme.colors.headerBg, color: selectedTheme.colors.headerText }}
-                                        >
-                                            ¡BINGO!
-                                        </button>
-                                    </div>
-                                    <BingoCard
-                                        card={card}
-                                        onMarkNumber={(num) => handleMarkNumber(card.id, num)}
-                                        mode={activeGame?.mode as any || '1-75'}
-                                        calledNumbers={activeGame?.called_numbers || []}
-                                        showAutoMark={true}
-                                        theme={selectedTheme}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+              ))}
             </div>
+          </>
+        )}
+      </main>
 
-            {notification && (
-                <div className={`notification ${notification.type}`}>
-                    {notification.msg}
-                    <button onClick={() => setNotification(null)}>×</button>
-                </div>
-            )}
+      {/* Instructions */}
+      <div className="instructions">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4M12 8h.01" />
+        </svg>
+        <span>Tap numbers to mark them. Called numbers highlight automatically.</span>
+      </div>
 
-            <style jsx>{`
-        .play-container {
+      <style jsx>{`
+        .play-page {
           min-height: 100vh;
-          background: #0a0a1a;
-          color: white;
-          padding-bottom: 40px;
+          display: flex;
+          flex-direction: column;
+          position: relative;
         }
 
-        .play-header {
+        .bg-animation {
+          position: fixed;
+          inset: 0;
+          z-index: -1;
+          overflow: hidden;
+        }
+
+        .bg-gradient {
+          position: absolute;
+          inset: 0;
+          background: linear-gradient(135deg, #0a0a0a 0%, #1a0033 50%, #0a0a0a 100%);
+        }
+
+        .bg-orb {
+          position: absolute;
+          border-radius: 50%;
+          filter: blur(80px);
+          opacity: 0.3;
+          animation: float 20s ease-in-out infinite;
+        }
+
+        .orb-1 {
+          width: 500px;
+          height: 500px;
+          background: var(--uv-violet);
+          top: -200px;
+          right: -200px;
+        }
+
+        .orb-2 {
+          width: 400px;
+          height: 400px;
+          background: #4a00b0;
+          bottom: -100px;
+          left: -100px;
+          animation-delay: -10s;
+        }
+
+        @keyframes float {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          50% { transform: translate(-20px, 20px) scale(1.05); }
+        }
+
+        .header {
+          background: rgba(10, 10, 10, 0.9);
+          backdrop-filter: blur(12px);
+          border-bottom: 1px solid var(--border-subtle);
+          position: sticky;
+          top: 0;
+          z-index: 100;
+        }
+
+        .header-inner {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: var(--space-3) var(--space-4);
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding: 15px 20px;
-          background: rgba(26, 26, 46, 0.9);
-          border-bottom: 1px solid #2a2a40;
         }
 
-        .status-bar {
-          background: #0f3460;
-          padding: 10px 20px;
-          text-align: center;
-          font-weight: bold;
-          font-size: 0.9rem;
-        }
-
-        .active-game-info, .no-game-info {
+        .brand {
           display: flex;
-          gap: 15px;
-          justify-content: center;
           align-items: center;
+          gap: var(--space-2);
+          text-decoration: none;
+          color: inherit;
         }
 
-        .live-indicator { color: #e94560; animation: pulse 1.5s infinite; }
-        .offline-indicator { color: #888; }
-        .game-name { color: #fff; }
-        .ball-count { color: #00b894; }
+        .brand-icon {
+          width: 32px;
+          height: 32px;
+          background: var(--uv-violet);
+          border-radius: var(--radius-sm);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: white;
+        }
 
-        .play-content {
-          display: grid;
-          grid-template-columns: 300px 1fr;
-          gap: 20px;
-          padding: 20px;
+        .brand-icon svg {
+          width: 18px;
+          height: 18px;
+        }
+
+        .brand-name {
+          font-weight: 600;
+          font-size: 1.1rem;
+        }
+
+        .play-badge {
+          padding: var(--space-1) var(--space-2);
+          background: var(--color-success);
+          color: white;
+          font-size: 0.7rem;
+          font-weight: 600;
+          border-radius: var(--radius-sm);
+          text-transform: uppercase;
+        }
+
+        .header-right {
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+        }
+
+        .live-badge {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          padding: var(--space-2) var(--space-3);
+          background: var(--color-error-bg);
+          border-radius: var(--radius-full);
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--color-error);
+        }
+
+        .live-dot {
+          width: 8px;
+          height: 8px;
+          background: var(--color-error);
+          border-radius: 50%;
+          animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        .game-bar {
+          background: var(--bg-secondary);
+          border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .game-bar.active {
+          background: linear-gradient(90deg, var(--uv-violet-dark), var(--uv-violet), var(--uv-violet-dark));
+        }
+
+        .game-bar-content {
           max-width: 1400px;
           margin: 0 auto;
+          padding: var(--space-4);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--space-4);
         }
 
-        /* Left Column */
-        .ball-display-section {
-          background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-          border-radius: 16px;
-          padding: 20px;
-          text-align: center;
-          height: fit-content;
-          border: 2px solid #0f3460;
-          position: sticky;
-          top: 20px;
+        .game-info {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .game-label {
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 0.85rem;
+        }
+
+        .game-name {
+          font-weight: 600;
+          color: white;
+        }
+
+        .current-number-display {
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
 
         .current-ball {
-          width: 200px;
-          height: 200px;
-          margin: 0 auto 20px;
-          background: radial-gradient(circle at 30% 30%, #e94560, #c0392b);
+          width: 70px;
+          height: 70px;
+          background: white;
           border-radius: 50%;
           display: flex;
           flex-direction: column;
-          justify-content: center;
-          align-items: center;
-          box-shadow: 0 10px 30px rgba(233, 69, 96, 0.4);
-          border: 5px solid rgba(255,255,255,0.1);
-        }
-
-        .current-ball.pop {
-           animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-        }
-
-        .ball-letter { font-size: 2.5rem; line-height: 1; opacity: 0.9; }
-        .ball-number { font-size: 5rem; font-weight: 800; line-height: 1; }
-        .waiting-text { font-size: 1.2rem; color: rgba(255,255,255,0.7); }
-
-        .last-called-list {
-          display: flex;
-          justify-content: center;
-          gap: 10px;
-          margin-top: 15px;
-        }
-
-        .mini-ball {
-          background: #0f3460;
-          width: 40px;
-          height: 40px;
-          border-radius: 50%;
-          display: flex;
           align-items: center;
           justify-content: center;
-          font-weight: bold;
-          color: #aaa;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
         }
 
-        /* Right Column */
-        .player-cards-section {
-           /* flex grow handled by grid */
+        .ball-letter {
+          font-size: 0.8rem;
+          font-weight: 700;
+          color: var(--uv-violet);
+          line-height: 1;
         }
 
-        .connect-prompt, .no-cards, .loading-cards {
-          text-align: center;
-          padding: 50px;
-          background: rgba(255,255,255,0.05);
-          border-radius: 16px;
-          color: #aaa;
-        }
-        
-        .buy-link {
-          display: inline-block;
-          margin-top: 20px;
-          padding: 10px 25px;
-          background: #00b894;
-          color: white;
-          border-radius: 25px;
-          font-weight: bold;
+        .ball-number {
+          font-size: 1.8rem;
+          font-weight: 800;
+          color: var(--uv-violet);
+          line-height: 1;
         }
 
-        .cards-grid-play {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-          gap: 20px;
+        .waiting-text {
+          color: rgba(255, 255, 255, 0.7);
         }
 
-        .play-card-wrapper {
-          background: rgba(0,0,0,0.2);
-          padding: 10px;
-          border-radius: 12px;
-        }
-
-        .play-card-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 10px;
-          padding: 0 5px;
-        }
-
-        .card-id { color: #888; font-size: 0.9rem; }
-        
-        .btn-bingo {
-          background: linear-gradient(135deg, #f1c40f, #f39c12);
-          border: none;
-          color: #000;
-          font-weight: 900;
-          padding: 5px 15px;
-          border-radius: 20px;
-          cursor: pointer;
+        .game-stats {
+          color: rgba(255, 255, 255, 0.7);
           font-size: 0.9rem;
-          box-shadow: 0 4px 10px rgba(243, 156, 18, 0.4);
-          transition: transform 0.2s;
-        }
-        
-        .btn-bingo:hover {
-          transform: scale(1.1);
         }
 
-        .notification {
-          position: fixed;
-          bottom: 30px;
-          left: 50%;
-          transform: translateX(-50%);
-          padding: 15px 30px;
-          border-radius: 30px;
+        .waiting-bar {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: var(--space-4);
           display: flex;
           align-items: center;
-          gap: 15px;
-          z-index: 1000;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-          animation: slideUp 0.3s ease;
+          justify-content: center;
+          gap: var(--space-3);
+          color: var(--text-muted);
         }
 
-        .notification.win { background: #00b894; color: white; font-weight: bold; font-size: 1.2rem; }
-        .notification.info { background: #0f3460; color: white; border: 1px solid #1a4a7a; }
-        
-        .notification button {
-          background: none;
-          border: none;
-          color: inherit;
-          font-size: 1.5rem;
-          cursor: pointer;
+        .waiting-icon {
+          animation: spin 2s linear infinite;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        .called-strip {
+          background: var(--bg-card);
+          border-bottom: 1px solid var(--border-subtle);
+          padding: var(--space-3) var(--space-4);
+          display: flex;
+          align-items: center;
+          gap: var(--space-3);
+          max-width: 1400px;
+          margin: 0 auto;
+          overflow-x: auto;
+        }
+
+        .strip-label {
+          font-size: 0.85rem;
+          color: var(--text-muted);
+          white-space: nowrap;
+        }
+
+        .called-numbers {
+          display: flex;
+          gap: var(--space-2);
+          flex-wrap: nowrap;
+        }
+
+        .called-num {
+          padding: var(--space-1) var(--space-2);
+          background: var(--bg-tertiary);
+          border-radius: var(--radius-sm);
+          font-size: 0.8rem;
+          font-weight: 500;
+          color: var(--text-secondary);
+          white-space: nowrap;
           opacity: 0.7;
         }
 
-        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
-        @keyframes popIn { 0% { transform: scale(0.5); opacity: 0; } 80% { transform: scale(1.1); } 100% { transform: scale(1); opacity: 1; } }
-        @keyframes slideUp { from { transform: translate(-50%, 100%); } to { transform: translate(-50%, 0); } }
-
-        /* Theme Selector Styles */
-        .theme-toggle-btn {
-          background: rgba(255,255,255,0.1);
-          border: 1px solid rgba(255,255,255,0.2);
+        .called-num.latest {
+          background: var(--uv-violet);
           color: white;
-          font-size: 1.2rem;
-          width: 40px;
-          height: 40px;
-          border-radius: 50%;
+          opacity: 1;
+        }
+
+        .more-numbers {
+          color: var(--text-muted);
+          font-size: 0.8rem;
+        }
+
+        .bingo-alert {
+          background: linear-gradient(90deg, #ffc107, #ff9800, #ffc107);
+          padding: var(--space-3) var(--space-4);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-3);
+          font-weight: 700;
+          color: #000;
+          animation: bingo-flash 0.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes bingo-flash {
+          from { opacity: 0.9; }
+          to { opacity: 1; }
+        }
+
+        .claim-btn {
+          background: #000;
+          color: #ffc107;
+          border: none;
+          padding: var(--space-2) var(--space-4);
+          border-radius: var(--radius-md);
+          font-weight: 600;
           cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          margin-right: 15px;
-          transition: all 0.2s;
         }
 
-        .theme-toggle-btn:hover {
-          background: rgba(255,255,255,0.2);
-          transform: scale(1.1);
-        }
-
-        .theme-selector-overlay {
-          position: fixed;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          background: rgba(0,0,0,0.8);
-          backdrop-filter: blur(5px);
-          z-index: 2000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-        }
-
-        .theme-selector-modal {
-          background: #1a1a2e;
-          border: 2px solid #0f3460;
-          border-radius: 20px;
-          padding: 30px;
+        .main-content {
+          flex: 1;
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: var(--space-4);
           width: 100%;
-          max-width: 500px;
-          text-align: center;
-          box-shadow: 0 20px 50px rgba(0,0,0,0.5);
         }
 
-        .theme-selector-modal h3 {
-          margin-bottom: 25px;
-          color: #fff;
-        }
-
-        .theme-grid-play {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 15px;
-          margin-bottom: 25px;
-        }
-
-        .theme-btn-play {
-          background: #0f3460;
-          border: 2px solid transparent;
-          border-radius: 12px;
-          padding: 15px;
-          cursor: pointer;
+        .loading-state,
+        .empty-state {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 10px;
-          transition: all 0.2s;
+          justify-content: center;
+          min-height: 400px;
+          text-align: center;
+          gap: var(--space-4);
         }
 
-        .theme-btn-play:hover {
-          background: #1a4a7a;
+        .spinner {
+          width: 48px;
+          height: 48px;
+          border: 3px solid var(--border-default);
+          border-top-color: var(--uv-violet);
+          border-radius: 50%;
+          animation: spin 1s linear infinite;
         }
 
-        .theme-btn-play.active {
-          border-color: #00b894;
-          background: #16213e;
+        .empty-icon {
+          width: 80px;
+          height: 80px;
+          background: var(--bg-tertiary);
+          border-radius: var(--radius-lg);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-muted);
         }
 
-        .theme-preview-play {
-          width: 100%;
-          height: 50px;
-          border-radius: 8px;
-          position: relative;
-          overflow: hidden;
-          border: 1px solid rgba(255,255,255,0.1);
+        .empty-icon svg {
+          width: 40px;
+          height: 40px;
         }
 
-        .theme-accent-play {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 15px;
+        .empty-state h2 {
+          margin: 0;
         }
 
-        .theme-btn-play span {
-          color: #aaa;
-          font-size: 0.9rem;
-          font-weight: bold;
+        .empty-state p {
+          color: var(--text-muted);
+          margin: 0;
         }
 
-        .theme-btn-play.active span {
-          color: #fff;
-        }
-
-        .close-theme-btn {
-          background: #e94560;
-          border: none;
+        .btn-primary {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--space-2);
+          padding: var(--space-3) var(--space-5);
+          background: var(--uv-violet);
           color: white;
-          padding: 10px 25px;
-          border-radius: 20px;
-          font-weight: bold;
+          border-radius: var(--radius-md);
+          text-decoration: none;
+          font-weight: 500;
+          transition: all var(--transition-fast);
+        }
+
+        .btn-primary:hover {
+          background: var(--uv-violet-light);
+        }
+
+        .controls-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--space-4);
+          padding: var(--space-3) var(--space-4);
+          background: var(--bg-card);
+          border-radius: var(--radius-lg);
+          margin-bottom: var(--space-4);
+          flex-wrap: wrap;
+        }
+
+        .pattern-selector {
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+        }
+
+        .pattern-selector label {
+          font-size: 0.85rem;
+          color: var(--text-muted);
+        }
+
+        .pattern-selector select {
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-default);
+          border-radius: var(--radius-md);
+          padding: var(--space-2) var(--space-3);
+          color: var(--text-primary);
+          font-family: inherit;
           cursor: pointer;
-          transition: transform 0.2s;
         }
 
-        .close-theme-btn:hover {
-          transform: scale(1.05);
+        .cards-count {
+          color: var(--text-secondary);
+          font-size: 0.9rem;
         }
 
-        @media (max-width: 900px) {
-          .play-content {
+        .clear-btn {
+          background: transparent;
+          border: 1px solid var(--color-error);
+          color: var(--color-error);
+          padding: var(--space-2) var(--space-3);
+          border-radius: var(--radius-md);
+          font-size: 0.85rem;
+          cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .clear-btn:hover {
+          background: var(--color-error-bg);
+        }
+
+        .cards-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+          gap: var(--space-4);
+        }
+
+        .card-container {
+          background: var(--bg-card);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-lg);
+          padding: var(--space-4);
+          transition: all var(--transition-fast);
+        }
+
+        .card-container.has-bingo {
+          border-color: #ffc107;
+          box-shadow: 0 0 30px rgba(255, 193, 7, 0.3);
+        }
+
+        .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: var(--space-3);
+        }
+
+        .card-number {
+          font-weight: 600;
+        }
+
+        .bingo-badge {
+          padding: var(--space-1) var(--space-2);
+          background: #ffc107;
+          color: #000;
+          font-size: 0.7rem;
+          font-weight: 700;
+          border-radius: var(--radius-sm);
+          animation: pulse-badge 1s infinite;
+        }
+
+        @keyframes pulse-badge {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.05); }
+        }
+
+        .card-id {
+          text-align: center;
+          font-size: 0.75rem;
+          color: var(--text-muted);
+          font-family: var(--font-mono);
+          margin-top: var(--space-2);
+        }
+
+        .instructions {
+          max-width: 1400px;
+          margin: 0 auto;
+          padding: var(--space-4);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-2);
+          color: var(--text-muted);
+          font-size: 0.85rem;
+        }
+
+        @media (max-width: 768px) {
+          .game-bar-content {
+            flex-direction: column;
+            text-align: center;
+            gap: var(--space-3);
+          }
+
+          .game-info {
+            flex-direction: column;
+            gap: var(--space-1);
+          }
+
+          .controls-bar {
+            flex-direction: column;
+            gap: var(--space-3);
+          }
+
+          .cards-grid {
             grid-template-columns: 1fr;
           }
-          
-          .ball-display-section {
-            position: relative;
-            top: 0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 10px 20px;
-            text-align: left;
-          }
-          
-          .current-ball {
-            width: 80px;
-            height: 80px;
-            margin: 0;
-          }
-          
-          .ball-letter { font-size: 1.2rem; }
-          .ball-number { font-size: 2.2rem; }
-          .last-called-list { margin-top: 0; }
         }
       `}</style>
-        </main>
-    );
+    </div>
+  );
+}
+
+function Confetti() {
+  return (
+    <div className="confetti-container">
+      {[...Array(60)].map((_, i) => (
+        <div
+          key={i}
+          className="confetti-piece"
+          style={{
+            left: `${Math.random() * 100}%`,
+            animationDelay: `${Math.random() * 2}s`,
+            backgroundColor: ['#6a00ff', '#ffc107', '#4caf50', '#ff5722', '#2196f3'][Math.floor(Math.random() * 5)],
+          }}
+        />
+      ))}
+      <style jsx>{`
+        .confetti-container {
+          position: fixed;
+          inset: 0;
+          pointer-events: none;
+          z-index: 1000;
+          overflow: hidden;
+        }
+        .confetti-piece {
+          position: absolute;
+          top: -10px;
+          width: 10px;
+          height: 10px;
+          animation: fall 3s ease-out forwards;
+        }
+        @keyframes fall {
+          0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+          100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function getBingoLetter(num: number): string {
+  if (num <= 15) return 'B';
+  if (num <= 30) return 'I';
+  if (num <= 45) return 'N';
+  if (num <= 60) return 'G';
+  return 'O';
+}
+
+function BingoCardDisplay({
+  card,
+  markedNumbers,
+  calledNumbers,
+  currentNumber,
+  onMarkNumber,
+}: {
+  card: BingoCardType;
+  markedNumbers: Set<number>;
+  calledNumbers: number[];
+  currentNumber: number | null;
+  onMarkNumber: (num: number) => void;
+}) {
+  return (
+    <div className="bingo-card">
+      <div className="card-row header-row">
+        {['B', 'I', 'N', 'G', 'O'].map(letter => (
+          <div key={letter} className="cell header-cell">{letter}</div>
+        ))}
+      </div>
+      {card.numbers.map((row, rowIdx) => (
+        <div key={rowIdx} className="card-row">
+          {row.map((num, colIdx) => {
+            const isFree = num === null;
+            const numValue = typeof num === 'number' ? num : null;
+            const isMarked = numValue !== null && markedNumbers.has(numValue);
+            const isCalled = numValue !== null && calledNumbers.includes(numValue);
+            const isLatest = numValue === currentNumber;
+
+            return (
+              <div
+                key={colIdx}
+                className={`cell ${isFree ? 'free' : ''} ${isMarked ? 'marked' : ''} ${isCalled && !isMarked ? 'called' : ''} ${isLatest && !isMarked ? 'latest' : ''}`}
+                onClick={() => !isFree && numValue && onMarkNumber(numValue)}
+              >
+                {isFree ? 'FREE' : num}
+                {isMarked && !isFree && <span className="check">✓</span>}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      <style jsx>{`
+        .bingo-card {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .card-row {
+          display: flex;
+          gap: 3px;
+        }
+        .cell {
+          flex: 1;
+          aspect-ratio: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--bg-tertiary);
+          border-radius: var(--radius-sm);
+          font-weight: 600;
+          font-size: 1rem;
+          cursor: pointer;
+          position: relative;
+          transition: all var(--transition-fast);
+          user-select: none;
+        }
+        .cell:hover:not(.header-cell):not(.free) {
+          background: var(--bg-elevated);
+          transform: scale(1.05);
+        }
+        .header-cell {
+          background: var(--uv-violet);
+          color: white;
+          font-size: 1.1rem;
+          cursor: default;
+        }
+        .cell.free {
+          background: linear-gradient(135deg, var(--uv-violet-dark), var(--uv-violet));
+          color: white;
+          font-size: 0.6rem;
+          cursor: default;
+        }
+        .cell.marked {
+          background: var(--color-success) !important;
+          color: white;
+        }
+        .cell.called:not(.marked) {
+          background: var(--color-warning-bg);
+          border: 2px solid var(--color-warning);
+        }
+        .cell.latest:not(.marked) {
+          animation: glow 1s infinite;
+        }
+        @keyframes glow {
+          0%, 100% { box-shadow: 0 0 5px var(--color-warning); }
+          50% { box-shadow: 0 0 20px var(--color-warning); }
+        }
+        .check {
+          position: absolute;
+          font-size: 1.2rem;
+        }
+      `}</style>
+    </div>
+  );
 }
