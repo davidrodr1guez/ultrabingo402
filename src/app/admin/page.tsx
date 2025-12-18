@@ -105,18 +105,22 @@ export default function AdminPanel() {
         body: JSON.stringify({ name: gameName, mode: gameMode }),
       });
       const data = await res.json();
-      if (data.gameId) {
+      if (res.ok && data.gameId) {
         setGameId(data.gameId);
-        setGameActive(true);
-        setCalledNumbers([]);
-        setCurrentNumber(null);
+      } else {
+        // API returned error, use local mode
+        console.log('Using local mode - API error:', data.error || 'Unknown error');
+        setGameId(null);
       }
     } catch (error) {
-      console.error('Error starting game:', error);
-      setGameActive(true);
-      setCalledNumbers([]);
-      setCurrentNumber(null);
+      // Network or other error, use local mode
+      console.log('Using local mode - Network error:', error);
+      setGameId(null);
     }
+    // Always start the game (local mode if DB fails)
+    setGameActive(true);
+    setCalledNumbers([]);
+    setCurrentNumber(null);
   };
 
   const handleEndGame = async () => {
