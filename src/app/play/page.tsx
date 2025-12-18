@@ -31,6 +31,9 @@ export default function PlayPage() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [lastCalledNumber, setLastCalledNumber] = useState<number | null>(null);
+  const [isSubmittingClaim, setIsSubmittingClaim] = useState(false);
+  const [claimStatus, setClaimStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [submittedClaims, setSubmittedClaims] = useState<Set<string>>(new Set());
 
   // Load cards from localStorage
   useEffect(() => {
@@ -129,6 +132,57 @@ export default function PlayPage() {
       setCards([]);
       setMarkedNumbers({});
       setBingoCards(new Set());
+    }
+  };
+
+  const handleClaimBingo = async (cardId: string) => {
+    if (!address) {
+      setClaimStatus({ success: false, message: 'Please connect your wallet to claim' });
+      return;
+    }
+
+    if (submittedClaims.has(cardId)) {
+      setClaimStatus({ success: false, message: 'You already submitted a claim for this card' });
+      return;
+    }
+
+    const card = cards.find(c => c.id === cardId);
+    if (!card) {
+      setClaimStatus({ success: false, message: 'Card not found' });
+      return;
+    }
+
+    const cardMarkedNumbers = markedNumbers[cardId] || new Set<number>();
+
+    setIsSubmittingClaim(true);
+    setClaimStatus(null);
+
+    try {
+      const response = await fetch('/api/bingo/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cardId,
+          walletAddress: address,
+          markedNumbers: Array.from(cardMarkedNumbers),
+          cardNumbers: card.numbers,
+          pattern: winPattern,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setClaimStatus({ success: true, message: data.message || 'Claim submitted!' });
+        setSubmittedClaims(prev => new Set(prev).add(cardId));
+      } else {
+        setClaimStatus({ success: false, message: data.error || 'Failed to submit claim' });
+      }
+    } catch (error) {
+      console.error('Error submitting claim:', error);
+      setClaimStatus({ success: false, message: 'Failed to submit claim. Please try again.' });
+    } finally {
+      setIsSubmittingClaim(false);
     }
   };
 
@@ -233,8 +287,41 @@ export default function PlayPage() {
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
           </svg>
-          <span>BINGO! You have a winning card!</span>
-          <button className="claim-btn">Claim Prize</button>
+          <span>BINGO! You have {bingoCards.size} winning {bingoCards.size === 1 ? 'card' : 'cards'}!</span>
+          <div className="claim-buttons">
+            {Array.from(bingoCards).map((cardId, index) => {
+              const cardIndex = cards.findIndex(c => c.id === cardId) + 1;
+              const alreadyClaimed = submittedClaims.has(cardId);
+              return (
+                <button
+                  key={cardId}
+                  className={`claim-btn ${alreadyClaimed ? 'claimed' : ''}`}
+                  onClick={() => handleClaimBingo(cardId)}
+                  disabled={isSubmittingClaim || alreadyClaimed}
+                >
+                  {alreadyClaimed ? `Card #${cardIndex} Claimed` : `Claim Card #${cardIndex}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Claim Status Message */}
+      {claimStatus && (
+        <div className={`claim-status ${claimStatus.success ? 'success' : 'error'}`}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            {claimStatus.success ? (
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4L12 14.01l-3-3" />
+            ) : (
+              <>
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4M12 16h.01" />
+              </>
+            )}
+          </svg>
+          <span>{claimStatus.message}</span>
+          <button className="dismiss-btn" onClick={() => setClaimStatus(null)}>×</button>
         </div>
       )}
 
@@ -614,6 +701,12 @@ export default function PlayPage() {
           to { opacity: 1; }
         }
 
+        .claim-buttons {
+          display: flex;
+          gap: var(--space-2);
+          flex-wrap: wrap;
+        }
+
         .claim-btn {
           background: #000;
           color: #ffc107;
@@ -622,6 +715,56 @@ export default function PlayPage() {
           border-radius: var(--radius-md);
           font-weight: 600;
           cursor: pointer;
+          transition: all var(--transition-fast);
+        }
+
+        .claim-btn:hover:not(:disabled) {
+          background: #222;
+          transform: scale(1.05);
+        }
+
+        .claim-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+
+        .claim-btn.claimed {
+          background: #4caf50;
+          color: white;
+        }
+
+        .claim-status {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: var(--space-3);
+          padding: var(--space-3) var(--space-4);
+          font-weight: 500;
+        }
+
+        .claim-status.success {
+          background: var(--color-success-bg);
+          color: var(--color-success);
+        }
+
+        .claim-status.error {
+          background: var(--color-error-bg);
+          color: var(--color-error);
+        }
+
+        .dismiss-btn {
+          background: transparent;
+          border: none;
+          color: inherit;
+          font-size: 1.5rem;
+          cursor: pointer;
+          padding: 0;
+          line-height: 1;
+          opacity: 0.7;
+        }
+
+        .dismiss-btn:hover {
+          opacity: 1;
         }
 
         .main-content {

@@ -21,6 +21,23 @@ interface DbCard {
   payment_status: string;
 }
 
+interface BingoClaim {
+  id: string;
+  cardId: string;
+  walletAddress: string;
+  markedNumbers: number[];
+  cardNumbers: (number | null)[][];
+  pattern: string;
+  gameId: string | null;
+  gameName: string | null;
+  calledNumbersAtClaim: number[];
+  status: 'pending' | 'verified' | 'rejected';
+  createdAt: string;
+  verifiedAt?: string;
+  rejectedAt?: string;
+  rejectionReason?: string;
+}
+
 export default function AdminPanel() {
   const { isConnected, address } = useAccount();
   const isAuthorized = address && ADMIN_WALLETS.includes(address.toLowerCase());
@@ -42,6 +59,8 @@ export default function AdminPanel() {
   const [showCardsList, setShowCardsList] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [gameId, setGameId] = useState<string | null>(null);
+  const [pendingClaims, setPendingClaims] = useState<BingoClaim[]>([]);
+  const [processingClaim, setProcessingClaim] = useState<string | null>(null);
 
   const maxNumber = gameMode === '1-75' ? 75 : 90;
 
@@ -63,6 +82,66 @@ export default function AdminPanel() {
   useEffect(() => {
     refreshCards();
   }, [refreshCards]);
+
+  // Poll for pending claims
+  const refreshClaims = useCallback(async () => {
+    try {
+      const res = await fetch('/api/bingo/claims?pending=true');
+      const data = await res.json();
+      if (data.claims) {
+        setPendingClaims(data.claims);
+      }
+    } catch (error) {
+      console.log('Could not fetch claims');
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshClaims();
+    const interval = setInterval(refreshClaims, 5000); // Poll every 5 seconds
+    return () => clearInterval(interval);
+  }, [refreshClaims]);
+
+  const handleVerifyClaim = async (claimId: string) => {
+    setProcessingClaim(claimId);
+    try {
+      const res = await fetch('/api/bingo/claims', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ claimId, action: 'verify' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        refreshClaims();
+      }
+    } catch (error) {
+      console.error('Error verifying claim:', error);
+    } finally {
+      setProcessingClaim(null);
+    }
+  };
+
+  const handleRejectClaim = async (claimId: string) => {
+    const reason = prompt('Reason for rejection:');
+    if (!reason) return;
+
+    setProcessingClaim(claimId);
+    try {
+      const res = await fetch('/api/bingo/claims', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ claimId, action: 'reject', reason }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        refreshClaims();
+      }
+    } catch (error) {
+      console.error('Error rejecting claim:', error);
+    } finally {
+      setProcessingClaim(null);
+    }
+  };
 
   const syncGameState = async (newCalled: number[], newCurrent: number | null) => {
     if (!gameId) return;
@@ -567,6 +646,105 @@ export default function AdminPanel() {
                     </div>
                   </>
                 )}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Pending Claims */}
+        <section className="claims-section">
+          <div className="panel panel-claims">
+            <div className="panel-header">
+              <h3 className="panel-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                </svg>
+                BINGO Claims
+                {pendingClaims.length > 0 && (
+                  <span className="claims-badge">{pendingClaims.length}</span>
+                )}
+              </h3>
+              <button className="btn btn-sm btn-secondary" onClick={refreshClaims}>
+                Refresh
+              </button>
+            </div>
+
+            {pendingClaims.length === 0 ? (
+              <div className="no-claims">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M12 6v6l4 2" />
+                </svg>
+                <p>No pending claims</p>
+              </div>
+            ) : (
+              <div className="claims-list">
+                {pendingClaims.map((claim) => (
+                  <div key={claim.id} className="claim-card">
+                    <div className="claim-header">
+                      <span className="claim-time">
+                        {new Date(claim.createdAt).toLocaleTimeString()}
+                      </span>
+                      <span className="claim-pattern">{claim.pattern}</span>
+                    </div>
+                    <div className="claim-info">
+                      <div className="claim-row">
+                        <span className="claim-label">Card:</span>
+                        <span className="claim-value">{claim.cardId.slice(0, 8)}...</span>
+                      </div>
+                      <div className="claim-row">
+                        <span className="claim-label">Wallet:</span>
+                        <span className="claim-value">{claim.walletAddress.slice(0, 6)}...{claim.walletAddress.slice(-4)}</span>
+                      </div>
+                      <div className="claim-row">
+                        <span className="claim-label">Marked:</span>
+                        <span className="claim-value">{claim.markedNumbers.length} numbers</span>
+                      </div>
+                    </div>
+                    <div className="claim-preview">
+                      <div className="preview-mini">
+                        <div className="preview-row">
+                          {['B', 'I', 'N', 'G', 'O'].map(letter => (
+                            <div key={letter} className="preview-cell header mini">{letter}</div>
+                          ))}
+                        </div>
+                        {claim.cardNumbers.map((row, rowIdx) => (
+                          <div key={rowIdx} className="preview-row">
+                            {row.map((num, colIdx) => {
+                              const isFree = num === null;
+                              const isMarked = num !== null && claim.markedNumbers.includes(num);
+                              const isCalled = num !== null && calledNumbers.includes(num);
+                              return (
+                                <div
+                                  key={colIdx}
+                                  className={`preview-cell mini ${isFree ? 'free' : ''} ${isMarked ? 'marked' : ''} ${isCalled && !isMarked ? 'called' : ''}`}
+                                >
+                                  {isFree ? '★' : num}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="claim-actions">
+                      <button
+                        className="btn btn-success"
+                        onClick={() => handleVerifyClaim(claim.id)}
+                        disabled={processingClaim === claim.id}
+                      >
+                        {processingClaim === claim.id ? '...' : '✓ Verify'}
+                      </button>
+                      <button
+                        className="btn btn-danger"
+                        onClick={() => handleRejectClaim(claim.id)}
+                        disabled={processingClaim === claim.id}
+                      >
+                        ✗ Reject
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -1197,6 +1375,146 @@ export default function AdminPanel() {
           background: var(--color-warning);
           color: var(--bg-primary);
           font-size: 0.6rem;
+        }
+
+        /* Claims Section */
+        .claims-section {
+          margin-top: var(--space-6);
+        }
+
+        .panel-claims {
+          border-color: var(--color-warning);
+        }
+
+        .claims-badge {
+          background: var(--color-error);
+          color: white;
+          font-size: 0.75rem;
+          padding: 2px 8px;
+          border-radius: var(--radius-full);
+          margin-left: var(--space-2);
+          animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
+        }
+
+        .no-claims {
+          text-align: center;
+          padding: var(--space-6);
+          color: var(--text-muted);
+        }
+
+        .no-claims svg {
+          margin-bottom: var(--space-3);
+        }
+
+        .claims-list {
+          display: grid;
+          gap: var(--space-4);
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          margin-top: var(--space-4);
+        }
+
+        .claim-card {
+          background: var(--bg-tertiary);
+          border: 1px solid var(--border-default);
+          border-radius: var(--radius-lg);
+          padding: var(--space-4);
+        }
+
+        .claim-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: var(--space-3);
+        }
+
+        .claim-time {
+          font-size: 0.8rem;
+          color: var(--text-muted);
+        }
+
+        .claim-pattern {
+          background: var(--uv-violet);
+          color: white;
+          padding: 2px 8px;
+          border-radius: var(--radius-sm);
+          font-size: 0.75rem;
+          font-weight: 600;
+          text-transform: capitalize;
+        }
+
+        .claim-info {
+          margin-bottom: var(--space-3);
+        }
+
+        .claim-row {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: var(--space-1);
+        }
+
+        .claim-label {
+          font-size: 0.8rem;
+          color: var(--text-muted);
+        }
+
+        .claim-value {
+          font-size: 0.85rem;
+          font-family: var(--font-mono);
+          color: var(--text-secondary);
+        }
+
+        .claim-preview {
+          margin-bottom: var(--space-3);
+        }
+
+        .preview-mini {
+          display: inline-block;
+        }
+
+        .preview-cell.mini {
+          width: 24px;
+          height: 24px;
+          font-size: 0.55rem;
+        }
+
+        .preview-cell.marked {
+          background: var(--color-success);
+          color: white;
+        }
+
+        .claim-actions {
+          display: flex;
+          gap: var(--space-2);
+        }
+
+        .claim-actions .btn {
+          flex: 1;
+          padding: var(--space-2);
+          font-size: 0.85rem;
+        }
+
+        .btn-success {
+          background: var(--color-success);
+          color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+          background: #3ea14d;
+        }
+
+        .btn-danger {
+          background: transparent;
+          border: 1px solid var(--color-error);
+          color: var(--color-error);
+        }
+
+        .btn-danger:hover:not(:disabled) {
+          background: var(--color-error-bg);
         }
 
         /* Cards Table */
